@@ -6,13 +6,20 @@ import { event, sendResponse } from './fixtures'
 describe('envelope', () => {
   it('accepts UTC timestamps with optional milliseconds', async () => {
     expect(await Effect.runPromise(decodeEventEnvelope(event))).toEqual(event)
-    await Effect.runPromise(decodeEventEnvelope({ ...event, sourceTimestamp: '2026-09-16T12:00:00.123Z' }))
+    for (const sourceTimestamp of ['2026-09-16T12:00:00.123Z', '2024-02-29T12:00:00Z']) {
+      expect(await Effect.runPromise(decodeEventEnvelope({ ...event, sourceTimestamp })))
+        .toEqual({ ...event, sourceTimestamp })
+    }
   })
   it.each([
     { version: 2 }, { provider: 'other' }, { eventId: '' }, { eventType: 'x'.repeat(513) },
     { sourceRecordId: undefined }, { transcript: 'private' },
     { sourceTimestamp: '2026-02-30T12:00:00Z' }, { sourceTimestamp: 'not-a-date' },
     { sourceTimestamp: '2026-09-16T12:00:00+00:00' },
+    { sourceTimestamp: '2026-02-29T12:00:00Z' },
+    { sourceTimestamp: '2026-09-16T24:00:00Z' },
+    { sourceTimestamp: '2026-09-16T12:00:00.12Z' },
+    { sourceTimestamp: '2026-09-16T12:00:00.1234Z' },
   ])('rejects invalid metadata %j', async (patch) => {
     const result = await Effect.runPromise(Effect.either(decodeEventEnvelope({ ...event, ...patch })))
     expect(Either.isLeft(result)).toBe(true)

@@ -17,11 +17,11 @@ it('enqueues the ingested envelope and returns 202', async () => {
 it('fails closed without calling the queue', async () => {
   const enqueue = vi.fn(() => Effect.void)
   const response = await Effect.runPromise(granolaHandler(request()).pipe(
-    Effect.provide(GranolaIngestionLive('test-secret')),
+    Effect.provide(GranolaIngestionLive('whsec_dGVzdC1zZWNyZXQ=')),
     Effect.provideService(EventQueue, { enqueue }),
   ))
-  expect(response.status).toBe(503)
-  expect(await response.json()).toEqual({ error: 'ingestion_unavailable' })
+  expect(response.status).toBe(401)
+  expect(await response.json()).toEqual({ error: 'unauthorized' })
   expect(enqueue).not.toHaveBeenCalled()
 })
 it('maps enqueue failure to a sanitized 503', async () => {

@@ -6,15 +6,15 @@ import app, { createApp } from '../src/index'
 import { event, ingestFixture, sendResponse } from './fixtures'
 
 const environment = (send = vi.fn(async () => sendResponse)) => ({
-  GRANOLA_SIGNING_SECRET: 'test-secret',
+  GRANOLA_SIGNING_SECRET: 'whsec_dGVzdC1zZWNyZXQ=',
   EVENTS: { send, sendBatch: vi.fn(async () => sendResponse), metrics: vi.fn(async () => sendResponse.metadata.metrics) },
 }) satisfies Bindings
 
 it.each(['{}', 'not json', '{"transcript":"private"}'])('production fails closed: %s', async (body) => {
   const env = environment()
   const response = await app.request('/webhooks/granola', { method: 'POST', body, headers: { 'signature': 'fake' } }, env)
-  expect(response.status).toBe(503)
-  expect(await response.json()).toEqual({ error: 'ingestion_unavailable' })
+  expect(response.status).toBe(401)
+  expect(await response.json()).toEqual({ error: 'unauthorized' })
   expect(env.EVENTS.send).not.toHaveBeenCalled()
 })
 it('returns sanitized 500 without a configured secret', async () => {

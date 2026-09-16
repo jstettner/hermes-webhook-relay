@@ -19,6 +19,7 @@ export const createApp = (
     )
     return Effect.runPromise(granolaHandler(c.req.raw).pipe(
       Effect.provide(dependencies),
+      Effect.timeout('12 seconds'),
       Effect.catchAllCause(() => Effect.succeed(c.json({ error: 'internal_error' }, 500))),
     ))
   })

@@ -1,11 +1,13 @@
-import { Context, Data, Effect, Layer, Schema } from 'effect'
+import { Context, Data, DateTime, Effect, Either, Layer, Schema } from 'effect'
 
 const Identifier = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(512))
+const decodeTimestamp = Schema.decodeUnknownEither(Schema.DateTimeUtc)
 const SourceTimestamp = Schema.String.pipe(
+  Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/),
   Schema.filter((value) => {
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return false
-    const time = Date.parse(value)
-    return Number.isFinite(time) && new Date(time).toISOString() ===
+    const decoded = decodeTimestamp(value)
+    // Reject calendar rollover while preserving the provider's original string.
+    return Either.isRight(decoded) && DateTime.formatIso(decoded.right) ===
       (value.length === 20 ? value.replace('Z', '.000Z') : value)
   }, { message: () => 'Expected a valid UTC ISO timestamp' }),
 )
