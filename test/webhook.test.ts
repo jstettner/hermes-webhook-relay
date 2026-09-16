@@ -1,25 +1,34 @@
-import { Effect, Either } from 'effect'
+import { Effect } from 'effect'
 import { expect, it, vi } from 'vitest'
 import { EnqueueFailed, EventQueue } from '../src/event-queue'
-import { acceptWebhook, ingestGranola } from '../src/webhook'
+import { GranolaIngestionLive } from '../src/granola'
+import { granolaHandler } from '../src/routes/granola'
 import { event, ingestFixture, request } from './fixtures'
 
-it('enqueues the ingested envelope', async () => {
+it('enqueues the ingested envelope and returns 202', async () => {
   const enqueue = vi.fn(() => Effect.void)
-  await Effect.runPromise(acceptWebhook(request(), ingestFixture).pipe(Effect.provideService(EventQueue, { enqueue })))
+  const response = await Effect.runPromise(granolaHandler(request()).pipe(
+    Effect.provide(ingestFixture),
+    Effect.provideService(EventQueue, { enqueue }),
+  ))
+  expect(response.status).toBe(202)
   expect(enqueue).toHaveBeenCalledExactlyOnceWith(event)
 })
 it('fails closed without calling the queue', async () => {
   const enqueue = vi.fn(() => Effect.void)
-  const result = await Effect.runPromise(acceptWebhook(request(), ingestGranola).pipe(
-    Effect.provideService(EventQueue, { enqueue }), Effect.either,
+  const response = await Effect.runPromise(granolaHandler(request()).pipe(
+    Effect.provide(GranolaIngestionLive('test-secret')),
+    Effect.provideService(EventQueue, { enqueue }),
   ))
-  expect(Either.isLeft(result) && result.left._tag).toBe('IngestionUnavailable')
+  expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({ error: 'ingestion_unavailable' })
   expect(enqueue).not.toHaveBeenCalled()
 })
-it('propagates enqueue failure', async () => {
-  const result = await Effect.runPromise(acceptWebhook(request(), ingestFixture).pipe(
-    Effect.provideService(EventQueue, { enqueue: () => Effect.fail(new EnqueueFailed()) }), Effect.either,
+it('maps enqueue failure to a sanitized 503', async () => {
+  const response = await Effect.runPromise(granolaHandler(request()).pipe(
+    Effect.provide(ingestFixture),
+    Effect.provideService(EventQueue, { enqueue: () => Effect.fail(new EnqueueFailed()) }),
   ))
-  expect(Either.isLeft(result) && result.left._tag).toBe('EnqueueFailed')
+  expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({ error: 'enqueue_failed' })
 })

@@ -2,8 +2,11 @@
 
 A Hono Cloudflare Worker with an Effect-based event queue foundation.
 
-**Ingestion is not enabled.** `POST /webhooks/granola` always returns
-`503 {"error":"ingestion_unavailable"}` without reading the body or enqueueing.
+**Ingestion is not enabled.** With `GRANOLA_SIGNING_SECRET` configured,
+`POST /webhooks/granola` returns `503 {"error":"ingestion_unavailable"}` without
+reading the body or enqueueing. Missing/empty configuration returns sanitized 500.
+For local checks, set a placeholder secret in `.dev.vars` (never commit real secrets).
+Secret format validation will be added with signature verification.
 Do not register a real webhook yet. `GET /` retains the template greeting.
 
 ## Local verification
@@ -33,11 +36,12 @@ these checks do not require remote provisioning. Regenerate
 
 - `src/event-queue.ts`: bounded metadata schema/type, strict decoder, `EventQueue`
   service, typed `EnqueueFailed`, and live Cloudflare producer layer.
-- `src/webhook.ts`: ingestion contract, fail-closed adapter, and sequential
-  ingestion → enqueue Effect program.
-- `src/routes/granola.ts`: per-request layer wiring, one Effect execution boundary,
-  sanitized HTTP outcomes.
-- `src/index.ts`: typed Hono app factory and production default export.
+- `src/granola.ts`: `GranolaConfig` (redacted secret), `GranolaIngestion`, and
+  their live layers. Ingestion remains fail-closed.
+- `src/routes/granola.ts`: ingestion → enqueue orchestration, route Effect, and
+  sanitized HTTP outcomes; no layer wiring.
+- `src/index.ts`: typed Hono app factory, per-request layer composition, and the
+  Effect execution boundary.
 
 The envelope contains only version, provider, event ID/type, source record ID,
 and UTC source timestamp. Identifiers are 1–512 characters; timestamps use
@@ -45,8 +49,11 @@ and UTC source timestamp. Identifiers are 1–512 characters; timestamps use
 The ingestion contract requires authenticated, validated metadata; the queue
 adapter explicitly selects fields rather than forwarding arbitrary objects.
 
-Tests inject a fixture ingestion function via the app factory and recording or
-failing queue implementations. This seam has no environment flag or HTTP bypass.
+Tests provide a fixture `GranolaIngestion` layer via the app factory and recording
+or failing queue implementations. The app boundary provides live ingestion and
+queue layers. Live ingestion encapsulates configuration wiring from the secret
+binding; fixture layers do not require live configuration. No ingestion dependency
+is passed through the handler or orchestration. This seam has no environment flag or HTTP bypass.
 The production export always uses the unavailable adapter.
 
 Once ingestion is implemented, HTTP 202 means the queue send completed;
