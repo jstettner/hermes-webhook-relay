@@ -1,17 +1,6 @@
-import { Clock, Context, Effect, Encoding, Either, Layer, Redacted, Schema } from 'effect'
+import { Clock, Effect, Encoding, Either, Redacted, Schema } from 'effect'
 import { EventEnvelope } from './event-queue'
 import { readBody, WebhookConfigurationError, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
-
-export class PocketConfig extends Context.Tag('PocketConfig')<PocketConfig, {
-  readonly signingSecret: Redacted.Redacted<string>
-}>() {}
-
-export const PocketConfigLive = (secret: string | undefined) =>
-  Layer.effect(PocketConfig, Effect.suspend(() =>
-    secret === undefined || secret.length === 0
-      ? Effect.fail(new WebhookConfigurationError())
-      : Effect.succeed({ signingSecret: Redacted.make(secret) }),
-  ))
 
 // Pocket sends the full transcript and summaries, so allow long meetings.
 const MAX_BODY_BYTES = 2 * 1024 * 1024
@@ -29,13 +18,12 @@ const Payload = Schema.Struct({
   recording: Schema.Struct({ id: Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,512}$/)) }),
 })
 
-export const makePocketIngestion: Effect.Effect<WebhookIngestion, WebhookConfigurationError, PocketConfig> =
+export const PocketIngestionLive = (signingSecret: Redacted.Redacted<string>): Effect.Effect<WebhookIngestion, WebhookConfigurationError> =>
   Effect.gen(function* () {
-    const config = yield* PocketConfig
     // Pocket uses the secret string itself as the HMAC key; never attach it to errors.
     const key = yield* Effect.tryPromise({
       try: async () => {
-        const secret = Redacted.value(config.signingSecret)
+        const secret = Redacted.value(signingSecret)
         if (secret.length > 1024) throw new Error('Invalid secret')
         return crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
           { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
@@ -94,6 +82,3 @@ export const makePocketIngestion: Effect.Effect<WebhookIngestion, WebhookConfigu
     }
   })
 
-// Encapsulate the live configuration wiring; callers provide only the binding.
-export const PocketIngestionLive = (secret: string | undefined) =>
-  makePocketIngestion.pipe(Effect.provide(PocketConfigLive(secret)))

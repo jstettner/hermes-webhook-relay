@@ -1,17 +1,6 @@
-import { Clock, Context, Effect, Either, Encoding, Layer, Redacted, Schema } from 'effect'
+import { Clock, Effect, Either, Encoding, Redacted, Schema } from 'effect'
 import { EventEnvelope } from './event-queue'
 import { readBody, WebhookConfigurationError, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
-
-export class GranolaConfig extends Context.Tag('GranolaConfig')<GranolaConfig, {
-  readonly signingSecret: Redacted.Redacted<string>
-}>() {}
-
-export const GranolaConfigLive = (secret: string | undefined) =>
-  Layer.effect(GranolaConfig, Effect.suspend(() =>
-    secret === undefined || secret.length === 0
-      ? Effect.fail(new WebhookConfigurationError())
-      : Effect.succeed({ signingSecret: Redacted.make(secret) }),
-  ))
 
 const MAX_BODY_BYTES = 64 * 1024
 const Identifier = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,512}$/))
@@ -30,13 +19,12 @@ const Payload = Schema.Union(
   }),
 )
 
-export const makeGranolaIngestion: Effect.Effect<WebhookIngestion, WebhookConfigurationError, GranolaConfig> =
+export const GranolaIngestionLive = (signingSecret: Redacted.Redacted<string>): Effect.Effect<WebhookIngestion, WebhookConfigurationError> =>
   Effect.gen(function* () {
-    const config = yield* GranolaConfig
     // Decode and import once per construction; never attach secrets to errors.
     const key = yield* Effect.tryPromise({
       try: async () => {
-        const secret = Redacted.value(config.signingSecret)
+        const secret = Redacted.value(signingSecret)
         if (!secret.startsWith('whsec_') || secret.length > 1024) throw new Error('Invalid secret')
         const encoded = secret.slice(6)
         const decoded = Encoding.decodeBase64(encoded)
@@ -107,6 +95,3 @@ export const makeGranolaIngestion: Effect.Effect<WebhookIngestion, WebhookConfig
     }
   })
 
-// Encapsulate the live configuration wiring; callers provide only the binding.
-export const GranolaIngestionLive = (secret: string | undefined) =>
-  makeGranolaIngestion.pipe(Effect.provide(GranolaConfigLive(secret)))

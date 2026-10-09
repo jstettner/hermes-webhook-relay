@@ -5,7 +5,7 @@ import app from '../src/index'
 import { event, fixtureApp, ingestFixture, providersFixture, sendResponse } from './fixtures'
 
 const environment = (send = vi.fn(async () => sendResponse)) => ({
-  WEBHOOK_PROVIDERS: ['granola', 'pocket'],
+  WEBHOOK_PROVIDERS: 'granola,pocket',
   GRANOLA_SIGNING_SECRET: 'whsec_dGVzdC1zZWNyZXQ=',
   POCKET_SIGNING_SECRET: 'pocket-test-secret',
   EVENTS: { send, sendBatch: vi.fn(async () => sendResponse), metrics: vi.fn(async () => sendResponse.metadata.metrics) },
@@ -22,10 +22,10 @@ it.each(['granola', 'pocket'].flatMap((provider) =>
 })
 it.each([
   ['nothing is enabled by default', 'granola', undefined],
-  ['an empty list', 'granola', []],
-  ['a provider not in the list', 'pocket', ['granola']],
-  ['an unregistered provider', 'other', ['granola', 'pocket']],
-  ['an inherited property name', 'constructor', ['granola', 'pocket']],
+  ['an empty list', 'granola', ''],
+  ['a provider not in the list', 'pocket', 'granola'],
+  ['an unregistered provider', 'other', 'granola,pocket'],
+  ['an inherited property name', 'constructor', 'granola,pocket'],
 ])('returns 404 for %s', async (_case, provider, enabled) => {
   const env = { ...environment(), WEBHOOK_PROVIDERS: enabled }
   const response = await app.request(`/webhooks/${provider}`, { method: 'POST' }, env)
@@ -33,11 +33,19 @@ it.each([
   expect(await response.json()).toEqual({ error: 'not_found' })
   expect(env.EVENTS.send).not.toHaveBeenCalled()
 })
-it.each(['granola', ['granola', 'other'], [1], {}])('returns sanitized 500 for a malformed provider list: %j', async (enabled) => {
+it.each(['granola,pocket', ' granola , pocket '])('accepts the provider list %j', async (enabled) => {
   const env = { ...environment(), WEBHOOK_PROVIDERS: enabled }
-  const response = await app.request('/webhooks/granola', { method: 'POST' }, env)
-  expect(response.status).toBe(500)
-  expect(await response.json()).toEqual({ error: 'internal_error' })
+  for (const provider of ['granola', 'pocket']) {
+    expect((await app.request(`/webhooks/${provider}`, { method: 'POST' }, env)).status).toBe(401)
+  }
+})
+it.each(['granola,other', '["granola"]', 'GRANOLA'])('returns sanitized 500 on every webhook path for a malformed provider list: %j', async (enabled) => {
+  const env = { ...environment(), WEBHOOK_PROVIDERS: enabled }
+  for (const provider of ['granola', 'other']) {
+    const response = await app.request(`/webhooks/${provider}`, { method: 'POST' }, env)
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: 'internal_error' })
+  }
   expect(env.EVENTS.send).not.toHaveBeenCalled()
 })
 it.each([

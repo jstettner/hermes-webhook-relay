@@ -1,4 +1,4 @@
-import { Clock, Effect } from 'effect'
+import { Clock, Effect, Redacted } from 'effect'
 import { expect, it, vi } from 'vitest'
 import { GranolaIngestionLive } from '../src/granola'
 import { EventQueue } from '../src/event-queue'
@@ -39,7 +39,7 @@ async function signed(body: string | Uint8Array<ArrayBuffer> = JSON.stringify(pa
 async function handle(request: Request, configuredSecret = secret) {
   const enqueue = vi.fn(() => Effect.void)
   const response = await Effect.runPromise(granolaHandler(request).pipe(
-    Effect.provide(providersFixture({ granola: GranolaIngestionLive(configuredSecret) })),
+    Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make(configuredSecret)) })),
     Effect.provideService(EventQueue, { enqueue }), Effect.withClock(clock),
   ))
   return { response, enqueue }
@@ -64,7 +64,7 @@ it.each([false, true])('runs live ingestion through the app (queue fails: %s)', 
   })
   const request = await signed(undefined, String(Math.floor(Date.now() / 1000)))
   const response = await app.request(request, {}, {
-    WEBHOOK_PROVIDERS: ['granola'], GRANOLA_SIGNING_SECRET: secret,
+    WEBHOOK_PROVIDERS: 'granola', GRANOLA_SIGNING_SECRET: secret,
     EVENTS: { send, sendBatch: vi.fn(), metrics: vi.fn() },
   })
   expect(response.status).toBe(fails ? 503 : 202)
@@ -172,7 +172,7 @@ it('cancels a stalled body on ingestion timeout', async () => {
   const response = await Effect.runPromise(granolaHandler(new Request(request, {
     body: stream, duplex: 'half',
   } as RequestInit)).pipe(
-    Effect.provide(providersFixture({ granola: GranolaIngestionLive(secret) })),
+    Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make(secret)) })),
     Effect.provideService(EventQueue, { enqueue }),
     Effect.withClock(Object.assign(Clock.make(), {
       currentTimeMillis: Effect.succeed(now * 1000),
@@ -193,8 +193,8 @@ it('accepts the exact body-size limit', async () => {
   const body = JSON.stringify(payload)
   expect((await handle(await signed(body.padEnd(65536, ' ')))).response.status).toBe(202)
 })
-it.each([undefined, '', 'test-secret', 'whsec_', 'whsec_%%%', 'whsec_YR==', 'whsec_YQ'])('rejects invalid live configuration without exposing it: %s', async (value) => {
-  const result = await Effect.runPromise(Effect.either(GranolaIngestionLive(value)))
+it.each(['test-secret', 'whsec_', 'whsec_%%%', 'whsec_YR==', 'whsec_YQ'])('rejects an invalid secret format without exposing it: %s', async (value) => {
+  const result = await Effect.runPromise(Effect.either(GranolaIngestionLive(Redacted.make(value))))
   expect(result._tag).toBe('Left')
   if (result._tag === 'Left') {
     expect(result.left._tag).toBe('WebhookConfigurationError')

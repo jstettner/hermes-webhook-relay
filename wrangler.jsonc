@@ -9,11 +9,6 @@
       "invocation_logs": true
     }
   },
-  // Providers this deployment accepts, e.g. ["granola", "pocket"]. Each enabled
-  // provider also needs its signing secret (see README).
-  "vars": {
-    "WEBHOOK_PROVIDERS": []
-  },
   "queues": {
     "producers": [
       { "binding": "EVENTS", "queue": "hermes-webhook-events" }

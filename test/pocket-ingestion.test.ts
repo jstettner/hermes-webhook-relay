@@ -1,4 +1,4 @@
-import { Clock, Effect } from 'effect'
+import { Clock, Effect, Redacted } from 'effect'
 import { expect, it, vi } from 'vitest'
 import { PocketIngestionLive } from '../src/pocket'
 import { EventQueue } from '../src/event-queue'
@@ -51,7 +51,7 @@ async function signed(body: string | Uint8Array<ArrayBuffer> = JSON.stringify(pa
 async function handle(request: Request, configuredSecret = secret) {
   const enqueue = vi.fn(() => Effect.void)
   const response = await Effect.runPromise(pocketHandler(request).pipe(
-    Effect.provide(providersFixture({ pocket: PocketIngestionLive(configuredSecret) })),
+    Effect.provide(providersFixture({ pocket: PocketIngestionLive(Redacted.make(configuredSecret)) })),
     Effect.provideService(EventQueue, { enqueue }), Effect.withClock(clock),
   ))
   return { response, enqueue }
@@ -84,11 +84,19 @@ it.each([
 it('runs live ingestion through the app', async () => {
   const send = vi.fn(async () => sendResponse)
   const response = await app.request(await signed(undefined, String(Date.now())), {}, {
-    WEBHOOK_PROVIDERS: ['pocket'], POCKET_SIGNING_SECRET: secret,
+    WEBHOOK_PROVIDERS: 'pocket', POCKET_SIGNING_SECRET: secret,
     EVENTS: { send, sendBatch: vi.fn(), metrics: vi.fn() },
   })
   expect(response.status).toBe(202)
   expect(send).toHaveBeenCalledExactlyOnceWith(expected, { contentType: 'json' })
+})
+it('reads a secret containing commas from the bindings unsplit', async () => {
+  const send = vi.fn(async () => sendResponse)
+  const response = await app.request(await signed(undefined, String(Date.now()), 'a,b,c'), {}, {
+    WEBHOOK_PROVIDERS: 'pocket', POCKET_SIGNING_SECRET: 'a,b,c',
+    EVENTS: { send, sendBatch: vi.fn(), metrics: vi.fn() },
+  })
+  expect(response.status).toBe(202)
 })
 it('keeps the event ID when a retry is re-signed with a new header timestamp', async () => {
   const first = await handle(await signed(undefined, String(now)))
@@ -161,8 +169,8 @@ it('accepts a large transcript up to the 2 MiB limit and rejects one byte more',
   expect((await handle(await signed(body.padEnd(2 * 1024 * 1024, ' ')))).response.status).toBe(202)
   await rejected(await signed(body.padEnd(2 * 1024 * 1024 + 1, ' ')), 413)
 })
-it.each([undefined, '', 'x'.repeat(1025)])('rejects invalid live configuration without exposing it', async (value) => {
-  const result = await Effect.runPromise(Effect.either(PocketIngestionLive(value)))
+it('rejects an oversized secret', async () => {
+  const result = await Effect.runPromise(Effect.either(PocketIngestionLive(Redacted.make('x'.repeat(1025)))))
   expect(result._tag).toBe('Left')
   if (result._tag === 'Left') expect(result.left._tag).toBe('WebhookConfigurationError')
 })

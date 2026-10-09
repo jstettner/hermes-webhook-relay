@@ -1,0 +1,9 @@
+# Copy to .dev.vars for `npm run dev` (gitignored). In production, set each of
+# these with `wrangler secret put <NAME>` so deploys never reset them.
+
+# Comma-separated providers to accept. Unset or empty accepts nothing.
+WEBHOOK_PROVIDERS=granola,pocket
+
+# Signing secret for each enabled provider.
+GRANOLA_SIGNING_SECRET=whsec_replace-me
+POCKET_SIGNING_SECRET=replace-me

@@ -5,24 +5,29 @@ Granola and Pocket.
 
 ## Configuration
 
-Providers are opt-in. List the ones this deployment accepts in `wrangler.jsonc`,
-and store each enabled provider's signing secret as a Cloudflare secret
-(`wrangler secret put …`; locally in `.dev.vars`; never commit secrets):
+Providers are opt-in. Each deployment sets `WEBHOOK_PROVIDERS` (a comma-separated
+list such as `granola,pocket`) and a signing secret for each enabled provider.
+None of these are checked in:
 
-```jsonc
-"vars": { "WEBHOOK_PROVIDERS": ["granola", "pocket"] }
-```
+- **Locally:** copy `.dev.vars.example` to `.dev.vars` (gitignored) and fill it in.
+- **Deployed:** set each value with `wrangler secret put`, for example
+  `wrangler secret put WEBHOOK_PROVIDERS`. `WEBHOOK_PROVIDERS` is not sensitive,
+  but secrets persist across deploys, whereas `wrangler deploy` resets plain vars
+  to whatever `wrangler.jsonc` declares. If you prefer a dashboard var, also set
+  `"keep_vars": true` in `wrangler.jsonc` and do not declare it there.
 
 | Provider | Route | Secret binding |
 | --- | --- | --- |
 | `granola` | `POST /webhooks/granola` | `GRANOLA_SIGNING_SECRET` |
 | `pocket` | `POST /webhooks/pocket` | `POCKET_SIGNING_SECRET` |
 
-The checked-in list is empty, so nothing is accepted until you opt in. A provider
-that is unregistered or not listed returns 404 `not_found`. A listed provider whose
-secret is missing or malformed, or a malformed `WEBHOOK_PROVIDERS` value, returns
-sanitized 500. Each request resolves only its own provider, so one provider's
-misconfiguration does not affect another's route.
+Configuration is read with Effect `Config` from a `ConfigProvider` built over the
+string-valued bindings, so it must be a plain string (not a JSON array). Unset or
+empty `WEBHOOK_PROVIDERS` accepts nothing. A provider that is unregistered or not
+listed returns 404 `not_found`. A listed provider whose secret is missing, empty or
+malformed returns sanitized 500 on that provider's route only. A
+`WEBHOOK_PROVIDERS` value naming an unknown provider returns sanitized 500 on every
+webhook route.
 
 To add a provider, implement a `WebhookIngestion` builder (see `src/granola.ts`)
 and register it with its secret binding in `src/providers.ts`.
@@ -65,8 +70,8 @@ curl -i -X POST http://localhost:8787/webhooks/granola \
   -H 'Content-Type: application/json' --data '{"synthetic":true}'
 ```
 
-Expect 200 for the root and, for the unsigned webhook, 401 when `granola` is
-enabled with a secret, 404 when it is not enabled, and 500 when it is enabled
+Create `.dev.vars` from `.dev.vars.example` first. Expect 200 for the root and,
+for the unsigned webhook, 401 when `granola` is enabled with a secret, 404 when it is not enabled, and 500 when it is enabled
 without a secret. Wrangler uses a local queue;
 these checks do not require remote provisioning. Regenerate
 `worker-configuration.d.ts` with `npm run cf-typegen` whenever Wrangler
@@ -80,10 +85,11 @@ not written into the committed types.
 - `src/webhook.ts`: provider-neutral ingestion and resolution errors, the
   `WebhookIngestion` shape, and bounded body reading.
 - `src/providers.ts`: the provider registry, the `WebhookProviders` service that
-  resolves a provider name to its ingestion, and its live layer, which reads
-  `WEBHOOK_PROVIDERS` and the secret bindings.
-- `src/granola.ts`, `src/pocket.ts`: per-provider config (redacted secret),
-  ingestion builders, signature verification, and payload schemas.
+  resolves a provider name to its ingestion, the `ConfigProvider` over Worker
+  bindings, and the live layer that reads `WEBHOOK_PROVIDERS` and each provider's
+  redacted secret through Effect `Config`.
+- `src/granola.ts`, `src/pocket.ts`: ingestion builders taking a redacted secret,
+  signature verification, and payload schemas.
 - `src/routes/webhook.ts`: resolve → ingest → enqueue orchestration and sanitized
   HTTP outcomes shared by every provider; no layer wiring.
 - `src/index.ts`: typed Hono app factory, the `AppLive` layer built from bindings,
@@ -125,8 +131,8 @@ See `spec/granola.md` for the provider contract and deployment checklist.
   contract and local validation policy; synthetic tests do not prove interoperability.
 - Provision `hermes-webhook-events` for the `EVENTS` producer binding. Configure
   HTTP pull consumption and verify free-plan 24-hour retention separately.
-- Set `WEBHOOK_PROVIDERS` and store each enabled provider's signing secret in
-  Cloudflare's secret store, not source control.
+- Set `WEBHOOK_PROVIDERS` and each enabled provider's signing secret with
+  `wrangler secret put`, not in source control.
 - Implement the private Hermes consumer with durable deduplication and safe
   acknowledgment, outside this repository.
 - Verify real events and deployed CPU limits. Dry-run bundle size alone does not

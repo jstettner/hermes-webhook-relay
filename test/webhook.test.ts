@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, Redacted } from 'effect'
 import { expect, it, vi } from 'vitest'
 import { EnqueueFailed, EventQueue } from '../src/event-queue'
 import { GranolaIngestionLive } from '../src/granola'
@@ -19,7 +19,7 @@ it('enqueues the ingested envelope and returns 202', async () => {
 it('fails closed without calling the queue', async () => {
   const enqueue = vi.fn(() => Effect.void)
   const response = await Effect.runPromise(granolaHandler(request()).pipe(
-    Effect.provide(providersFixture({ granola: GranolaIngestionLive('whsec_dGVzdC1zZWNyZXQ=') })),
+    Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make('whsec_dGVzdC1zZWNyZXQ=')) })),
     Effect.provideService(EventQueue, { enqueue }),
   ))
   expect(response.status).toBe(401)
