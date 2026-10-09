@@ -1,10 +1,12 @@
 import { Clock, Effect } from 'effect'
 import { expect, it, vi } from 'vitest'
-import { GranolaIngestion, GranolaIngestionLive } from '../src/granola'
+import { GranolaIngestionLive } from '../src/granola'
 import { EventQueue } from '../src/event-queue'
-import { granolaHandler } from '../src/routes/granola'
+import { webhookHandler } from '../src/routes/webhook'
 import app from '../src/index'
-import { sendResponse } from './fixtures'
+import { providersFixture, sendResponse } from './fixtures'
+
+const granolaHandler = webhookHandler('granola')
 
 const secret = 'whsec_dGVzdC1zZWNyZXQ='
 const now = 1800000000
@@ -37,7 +39,7 @@ async function signed(body: string | Uint8Array<ArrayBuffer> = JSON.stringify(pa
 async function handle(request: Request, configuredSecret = secret) {
   const enqueue = vi.fn(() => Effect.void)
   const response = await Effect.runPromise(granolaHandler(request).pipe(
-    Effect.provide(GranolaIngestionLive(configuredSecret)),
+    Effect.provide(providersFixture({ granola: GranolaIngestionLive(configuredSecret) })),
     Effect.provideService(EventQueue, { enqueue }), Effect.withClock(clock),
   ))
   return { response, enqueue }
@@ -62,7 +64,7 @@ it.each([false, true])('runs live ingestion through the app (queue fails: %s)', 
   })
   const request = await signed(undefined, String(Math.floor(Date.now() / 1000)))
   const response = await app.request(request, {}, {
-    GRANOLA_SIGNING_SECRET: secret,
+    WEBHOOK_PROVIDERS: ['granola'], GRANOLA_SIGNING_SECRET: secret,
     EVENTS: { send, sendBatch: vi.fn(), metrics: vi.fn() },
   })
   expect(response.status).toBe(fails ? 503 : 202)
@@ -170,7 +172,7 @@ it('cancels a stalled body on ingestion timeout', async () => {
   const response = await Effect.runPromise(granolaHandler(new Request(request, {
     body: stream, duplex: 'half',
   } as RequestInit)).pipe(
-    Effect.provide(GranolaIngestionLive(secret)),
+    Effect.provide(providersFixture({ granola: GranolaIngestionLive(secret) })),
     Effect.provideService(EventQueue, { enqueue }),
     Effect.withClock(Object.assign(Clock.make(), {
       currentTimeMillis: Effect.succeed(now * 1000),
@@ -192,12 +194,10 @@ it('accepts the exact body-size limit', async () => {
   expect((await handle(await signed(body.padEnd(65536, ' ')))).response.status).toBe(202)
 })
 it.each([undefined, '', 'test-secret', 'whsec_', 'whsec_%%%', 'whsec_YR==', 'whsec_YQ'])('rejects invalid live configuration without exposing it: %s', async (value) => {
-  const result = await Effect.runPromise(GranolaIngestion.pipe(
-    Effect.provide(GranolaIngestionLive(value)), Effect.either,
-  ))
+  const result = await Effect.runPromise(Effect.either(GranolaIngestionLive(value)))
   expect(result._tag).toBe('Left')
   if (result._tag === 'Left') {
-    expect(result.left._tag).toBe('GranolaConfigurationError')
+    expect(result.left._tag).toBe('WebhookConfigurationError')
     expect(JSON.stringify(result.left)).not.toContain('whsec_')
   }
 })

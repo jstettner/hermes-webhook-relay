@@ -1,30 +1,36 @@
 import { Hono } from 'hono'
 import { Effect, Layer } from 'effect'
-import { EventQueueLive } from './event-queue'
-import { granolaHandler } from './routes/granola'
-import { GranolaIngestionLive, type GranolaIngestion, type GranolaConfigurationError } from './granola'
+import { EventQueueLive, type EventQueue } from './event-queue'
+import { WebhookProvidersLive, type ProviderSecrets, type WebhookProviders } from './providers'
+import { webhookHandler } from './routes/webhook'
 
 // Secrets are supplied by Cloudflare, not checked into Wrangler configuration.
-export type Bindings = CloudflareBindings & { GRANOLA_SIGNING_SECRET?: string }
+// WEBHOOK_PROVIDERS is validated at runtime, so widen its generated literal type.
+export type Bindings = Omit<CloudflareBindings, 'WEBHOOK_PROVIDERS'> & ProviderSecrets & {
+  WEBHOOK_PROVIDERS?: unknown
+}
 
-export const createApp = (
-  ingestion?: Layer.Layer<GranolaIngestion, GranolaConfigurationError>,
-) => {
+// The single service boundary: everything a request needs, built from the bindings.
+export type AppLayer = (env: Bindings) => Layer.Layer<WebhookProviders | EventQueue>
+
+export const AppLive: AppLayer = (env) =>
+  Layer.merge(WebhookProvidersLive(env), EventQueueLive(env.EVENTS))
+
+// Ingestion has its own 10 s timeout (INGESTION_TIMEOUT); this outer bound also
+// covers the queue send, which has none, and leaves headroom for the inner one to fire first.
+const REQUEST_TIMEOUT = '12 seconds'
+
+export const createApp = (makeLayer: AppLayer) => {
   const app = new Hono<{ Bindings: Bindings }>()
   app.get('/', (c) => c.text('Hello Hono!'))
-  app.post('/webhooks/granola', (c) => {
-    const dependencies = Layer.merge(
-      ingestion ?? GranolaIngestionLive(c.env.GRANOLA_SIGNING_SECRET),
-      EventQueueLive(c.env.EVENTS),
-    )
-    return Effect.runPromise(granolaHandler(c.req.raw).pipe(
-      Effect.provide(dependencies),
-      Effect.timeout('12 seconds'),
+  app.post('/webhooks/:provider', (c) =>
+    Effect.runPromise(webhookHandler(c.req.param('provider'))(c.req.raw).pipe(
+      Effect.provide(makeLayer(c.env)),
+      Effect.timeout(REQUEST_TIMEOUT),
       Effect.catchAllCause(() => Effect.succeed(c.json({ error: 'internal_error' }, 500))),
-    ))
-  })
+    )))
   app.onError((_error, c) => c.json({ error: 'internal_error' }, 500))
   return app
 }
 
-export default createApp()
+export default createApp(AppLive)

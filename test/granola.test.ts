@@ -14,5 +14,5 @@ it.each([undefined, ''])('rejects missing configuration: %s', async (secret) => 
   const result = await Effect.runPromise(GranolaConfig.pipe(
     Effect.provide(GranolaConfigLive(secret)), Effect.either,
   ))
-  expect(Either.isLeft(result) && result.left._tag).toBe('GranolaConfigurationError')
+  expect(Either.isLeft(result) && result.left._tag).toBe('WebhookConfigurationError')
 })

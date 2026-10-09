@@ -1,21 +1,17 @@
-import { Clock, Context, Data, Effect, Either, Encoding, Layer, Redacted, Schema } from 'effect'
+import { Clock, Context, Effect, Either, Encoding, Layer, Redacted, Schema } from 'effect'
 import { EventEnvelope } from './event-queue'
-import { readBody, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
+import { readBody, WebhookConfigurationError, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
 
 export class GranolaConfig extends Context.Tag('GranolaConfig')<GranolaConfig, {
   readonly signingSecret: Redacted.Redacted<string>
 }>() {}
 
-export class GranolaConfigurationError extends Data.TaggedError('GranolaConfigurationError')<{}> {}
-
 export const GranolaConfigLive = (secret: string | undefined) =>
   Layer.effect(GranolaConfig, Effect.suspend(() =>
     secret === undefined || secret.length === 0
-      ? Effect.fail(new GranolaConfigurationError())
+      ? Effect.fail(new WebhookConfigurationError())
       : Effect.succeed({ signingSecret: Redacted.make(secret) }),
   ))
-
-export class GranolaIngestion extends Context.Tag('GranolaIngestion')<GranolaIngestion, WebhookIngestion>() {}
 
 const MAX_BODY_BYTES = 64 * 1024
 const Identifier = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,512}$/))
@@ -34,10 +30,10 @@ const Payload = Schema.Union(
   }),
 )
 
-export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
+export const makeGranolaIngestion: Effect.Effect<WebhookIngestion, WebhookConfigurationError, GranolaConfig> =
   Effect.gen(function* () {
     const config = yield* GranolaConfig
-    // Decode and import once per layer construction; never attach secrets to errors.
+    // Decode and import once per construction; never attach secrets to errors.
     const key = yield* Effect.tryPromise({
       try: async () => {
         const secret = Redacted.value(config.signingSecret)
@@ -49,7 +45,7 @@ export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
         return crypto.subtle.importKey('raw', decoded.right,
           { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
       },
-      catch: () => new GranolaConfigurationError(),
+      catch: () => new WebhookConfigurationError(),
     })
     return {
       ingest: (request: Request) => Effect.gen(function* () {
@@ -107,11 +103,10 @@ export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
           sourceRecordId: payload.note_id,
           sourceTimestamp: payload.occurred_at,
         }
-      }).pipe(Effect.timeoutFail({ duration: '10 seconds', onTimeout: () => new WebhookIngestionFailed() })),
+      }),
     }
-  }),
-)
+  })
 
 // Encapsulate the live configuration wiring; callers provide only the binding.
 export const GranolaIngestionLive = (secret: string | undefined) =>
-  GranolaIngestionFromConfig.pipe(Layer.provide(GranolaConfigLive(secret)))
+  makeGranolaIngestion.pipe(Effect.provide(GranolaConfigLive(secret)))

@@ -11,6 +11,10 @@ describe('envelope', () => {
         .toEqual({ ...event, sourceTimestamp })
     }
   })
+  it('accepts the pocket provider', async () => {
+    const pocket = { ...event, provider: 'pocket' }
+    expect(await Effect.runPromise(decodeEventEnvelope(pocket))).toEqual(pocket)
+  })
   it.each([
     { version: 2 }, { provider: 'other' }, { eventId: '' }, { eventType: 'x'.repeat(513) },
     { sourceRecordId: undefined }, { transcript: 'private' },

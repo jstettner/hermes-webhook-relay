@@ -5,6 +5,10 @@ export class WebhookUnauthorized extends Data.TaggedError('WebhookUnauthorized')
 export class WebhookInvalidPayload extends Data.TaggedError('WebhookInvalidPayload')<{}> {}
 export class WebhookBodyTooLarge extends Data.TaggedError('WebhookBodyTooLarge')<{}> {}
 export class WebhookIngestionFailed extends Data.TaggedError('WebhookIngestionFailed')<{}> {}
+// Resolution errors: the provider is unknown or not enabled, or is enabled but
+// misconfigured. Never attach configuration values to these.
+export class WebhookProviderNotFound extends Data.TaggedError('WebhookProviderNotFound')<{}> {}
+export class WebhookConfigurationError extends Data.TaggedError('WebhookConfigurationError')<{}> {}
 
 export type WebhookIngestionError = WebhookUnauthorized | WebhookInvalidPayload |
   WebhookBodyTooLarge | WebhookIngestionFailed
