@@ -38,10 +38,13 @@ these checks do not require remote provisioning. Regenerate
 
 - `src/event-queue.ts`: bounded metadata schema/type, strict decoder, `EventQueue`
   service, typed `EnqueueFailed`, and live Cloudflare producer layer.
+- `src/webhook.ts`: provider-neutral ingestion errors, the `WebhookIngestion`
+  service shape, and bounded body reading.
 - `src/granola.ts`: `GranolaConfig` (redacted secret), `GranolaIngestion`, and
-  their live layers, bounded body reading, signature verification, and payload schemas.
-- `src/routes/granola.ts`: ingestion → enqueue orchestration, route Effect, and
-  sanitized HTTP outcomes; no layer wiring.
+  their live layers, signature verification, and payload schemas.
+- `src/routes/webhook.ts`: ingestion → enqueue orchestration and sanitized HTTP
+  outcomes shared by every provider; no layer wiring.
+- `src/routes/granola.ts`: the Granola route handler.
 - `src/index.ts`: typed Hono app factory, per-request layer composition, and the
   Effect execution boundary.
 

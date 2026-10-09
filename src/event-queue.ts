@@ -14,7 +14,7 @@ const SourceTimestamp = Schema.String.pipe(
 
 export const EventEnvelope = Schema.Struct({
   version: Schema.Literal(1),
-  provider: Schema.Literal('granola'),
+  provider: Schema.Literal('granola', 'pocket'),
   eventId: Identifier,
   eventType: Identifier,
   sourceRecordId: Identifier,

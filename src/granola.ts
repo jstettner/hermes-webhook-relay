@@ -1,18 +1,12 @@
-import { Clock, Context, Data, Effect, Either, Encoding, Layer, Redacted, Schema, Stream } from 'effect'
+import { Clock, Context, Data, Effect, Either, Encoding, Layer, Redacted, Schema } from 'effect'
 import { EventEnvelope } from './event-queue'
+import { readBody, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
 
 export class GranolaConfig extends Context.Tag('GranolaConfig')<GranolaConfig, {
   readonly signingSecret: Redacted.Redacted<string>
 }>() {}
 
 export class GranolaConfigurationError extends Data.TaggedError('GranolaConfigurationError')<{}> {}
-export class GranolaUnauthorized extends Data.TaggedError('GranolaUnauthorized')<{}> {}
-export class GranolaInvalidPayload extends Data.TaggedError('GranolaInvalidPayload')<{}> {}
-export class GranolaBodyTooLarge extends Data.TaggedError('GranolaBodyTooLarge')<{}> {}
-export class GranolaIngestionFailed extends Data.TaggedError('GranolaIngestionFailed')<{}> {}
-
-export type GranolaIngestionError = GranolaUnauthorized | GranolaInvalidPayload |
-  GranolaBodyTooLarge | GranolaIngestionFailed
 
 export const GranolaConfigLive = (secret: string | undefined) =>
   Layer.effect(GranolaConfig, Effect.suspend(() =>
@@ -21,9 +15,7 @@ export const GranolaConfigLive = (secret: string | undefined) =>
       : Effect.succeed({ signingSecret: Redacted.make(secret) }),
   ))
 
-export class GranolaIngestion extends Context.Tag('GranolaIngestion')<GranolaIngestion, {
-  readonly ingest: (request: Request) => Effect.Effect<EventEnvelope, GranolaIngestionError>
-}>() {}
+export class GranolaIngestion extends Context.Tag('GranolaIngestion')<GranolaIngestion, WebhookIngestion>() {}
 
 const MAX_BODY_BYTES = 64 * 1024
 const Identifier = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,512}$/))
@@ -41,31 +33,6 @@ const Payload = Schema.Union(
     data: Schema.Struct({ changed_fields: Schema.Tuple(Schema.Literal('summary')) }),
   }),
 )
-
-const readBody = (request: Request) => Effect.suspend(() => {
-  const body = request.body
-  if (!body) return Effect.succeed(new Uint8Array())
-  if (body.locked) return Effect.fail(new GranolaInvalidPayload())
-  const buffer = new Uint8Array(MAX_BODY_BYTES)
-  return Stream.fromReadableStream({
-    evaluate: () => body,
-    onError: () => new GranolaInvalidPayload(),
-    releaseLockOnEnd: true,
-  }).pipe(
-    Stream.runFoldEffect(0, (length, chunk) => {
-      const nextLength = length + chunk.byteLength
-      if (nextLength > MAX_BODY_BYTES) return Effect.fail(new GranolaBodyTooLarge())
-      return Effect.sync(() => {
-        buffer.set(chunk, length)
-        return nextLength
-      })
-    }),
-    // Stream releases its reader before this finalizer. Cancellation must not
-    // block a timeout or replace the original error if the source rejects it.
-    Effect.ensuring(Effect.sync(() => { void body.cancel().catch(() => {}) })),
-    Effect.map((length) => buffer.slice(0, length)),
-  )
-})
 
 export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
   Effect.gen(function* () {
@@ -92,13 +59,13 @@ export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
         if (!id || !/^[A-Za-z0-9_-]{1,512}$/.test(id) ||
           !timestamp || !/^\d{1,12}$/.test(timestamp) ||
           !signatures || signatures.length > 4096) {
-          return yield* Effect.fail(new GranolaUnauthorized())
+          return yield* Effect.fail(new WebhookUnauthorized())
         }
         const entries = signatures.split(' ')
-        if (entries.length > 16) return yield* Effect.fail(new GranolaUnauthorized())
+        if (entries.length > 16) return yield* Effect.fail(new WebhookUnauthorized())
         const now = yield* Clock.currentTimeMillis
         if (Math.abs(Math.floor(now / 1000) - Number(timestamp)) > 300) {
-          return yield* Effect.fail(new GranolaUnauthorized())
+          return yield* Effect.fail(new WebhookUnauthorized())
         }
         const candidates = entries.flatMap((entry) => {
           const match = /^v1,([^,]+)$/.exec(entry)
@@ -108,8 +75,8 @@ export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
             Encoding.encodeBase64(decoded.right) !== match[1]) return []
           return [decoded.right]
         })
-        if (!candidates.length) return yield* Effect.fail(new GranolaUnauthorized())
-        const body = yield* readBody(request)
+        if (!candidates.length) return yield* Effect.fail(new WebhookUnauthorized())
+        const body = yield* readBody(request, MAX_BODY_BYTES)
         const prefix = new TextEncoder().encode(`${id}.${timestamp}.`)
         const signed = new Uint8Array(prefix.length + body.length)
         signed.set(prefix)
@@ -121,17 +88,17 @@ export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
             }
             return false
           },
-          catch: () => new GranolaIngestionFailed(),
+          catch: () => new WebhookIngestionFailed(),
         })
-        if (!verified) return yield* Effect.fail(new GranolaUnauthorized())
+        if (!verified) return yield* Effect.fail(new WebhookUnauthorized())
         const text = yield* Effect.try({
           try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body),
-          catch: () => new GranolaInvalidPayload(),
+          catch: () => new WebhookInvalidPayload(),
         })
         const payload = yield* Schema.decodeUnknown(Schema.parseJson(Payload))(text).pipe(
-          Effect.mapError(() => new GranolaInvalidPayload()),
+          Effect.mapError(() => new WebhookInvalidPayload()),
         )
-        if (payload.event_id !== id) return yield* Effect.fail(new GranolaInvalidPayload())
+        if (payload.event_id !== id) return yield* Effect.fail(new WebhookInvalidPayload())
         return {
           version: 1 as const,
           provider: 'granola' as const,
@@ -140,7 +107,7 @@ export const GranolaIngestionFromConfig = Layer.effect(GranolaIngestion,
           sourceRecordId: payload.note_id,
           sourceTimestamp: payload.occurred_at,
         }
-      }).pipe(Effect.timeoutFail({ duration: '10 seconds', onTimeout: () => new GranolaIngestionFailed() })),
+      }).pipe(Effect.timeoutFail({ duration: '10 seconds', onTimeout: () => new WebhookIngestionFailed() })),
     }
   }),
 )
