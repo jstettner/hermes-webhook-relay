@@ -37,7 +37,7 @@ export const GranolaIngestionLive = (signingSecret: Redacted.Redacted<string>): 
       catch: () => new WebhookConfigurationError(),
     })
     return {
-      ingest: (request: Request) => Effect.gen(function* () {
+      ingest: Effect.fn('GranolaIngestion.ingest')(function* (request: Request) {
         const id = request.headers.get('webhook-id')
         const timestamp = request.headers.get('webhook-timestamp')
         const signatures = request.headers.get('webhook-signature')

@@ -1,5 +1,5 @@
 import { Clock, Effect, Layer } from 'effect'
-import { EventQueueLive, type EventEnvelope } from '../src/event-queue'
+import { EventQueue, type EventEnvelope } from '../src/event-queue'
 import { createApp } from '../src/index'
 import { WebhookProviders } from '../src/providers'
 import { WebhookConfigurationError, WebhookProviderNotFound, type WebhookIngestion } from '../src/webhook'
@@ -25,4 +25,4 @@ export const providersFixture = (
 export const ingestFixture = providersFixture({ granola: Effect.succeed({ ingest: () => Effect.succeed(event) }) })
 // The app with fixture providers and the live queue adapter over the env binding.
 export const fixtureApp = (providers: Layer.Layer<WebhookProviders>) =>
-  createApp((env) => Layer.merge(providers, EventQueueLive(env.EVENTS)))
+  createApp((env) => Layer.merge(providers, EventQueue.layer(env.EVENTS)))

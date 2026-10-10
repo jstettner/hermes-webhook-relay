@@ -32,7 +32,7 @@ export const PocketIngestionLive = (signingSecret: Redacted.Redacted<string>): E
       catch: () => new WebhookConfigurationError(),
     })
     return {
-      ingest: (request: Request) => Effect.gen(function* () {
+      ingest: Effect.fn('PocketIngestion.ingest')(function* (request: Request) {
         const timestamp = request.headers.get('x-heypocket-timestamp')
         const signature = request.headers.get('x-heypocket-signature')
         // Missing headers also reject legacy webhooks that were created without a secret.

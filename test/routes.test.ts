@@ -33,13 +33,13 @@ it.each([
   expect(await response.json()).toEqual({ error: 'not_found' })
   expect(env.EVENTS.send).not.toHaveBeenCalled()
 })
-it.each(['granola,pocket', ' granola , pocket '])('accepts the provider list %j', async (enabled) => {
+it.each<Bindings['WEBHOOK_PROVIDERS']>(['granola,pocket', ' granola , pocket ', ['granola', 'pocket']])('accepts the provider list %j', async (enabled) => {
   const env = { ...environment(), WEBHOOK_PROVIDERS: enabled }
   for (const provider of ['granola', 'pocket']) {
     expect((await app.request(`/webhooks/${provider}`, { method: 'POST' }, env)).status).toBe(401)
   }
 })
-it.each(['granola,other', '["granola"]', 'GRANOLA'])('returns sanitized 500 on every webhook path for a malformed provider list: %j', async (enabled) => {
+it.each<Bindings['WEBHOOK_PROVIDERS']>(['granola,other', '["granola"]', 'GRANOLA', 'granola,pocket,', ['granola', 'other']])('returns sanitized 500 on every webhook path for a malformed provider list: %j', async (enabled) => {
   const env = { ...environment(), WEBHOOK_PROVIDERS: enabled }
   for (const provider of ['granola', 'other']) {
     const response = await app.request(`/webhooks/${provider}`, { method: 'POST' }, env)

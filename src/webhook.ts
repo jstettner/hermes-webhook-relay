@@ -1,14 +1,14 @@
-import { Data, Effect, Stream } from 'effect'
+import { Effect, Schema, Stream } from 'effect'
 import { EventEnvelope } from './event-queue'
 
-export class WebhookUnauthorized extends Data.TaggedError('WebhookUnauthorized')<{}> {}
-export class WebhookInvalidPayload extends Data.TaggedError('WebhookInvalidPayload')<{}> {}
-export class WebhookBodyTooLarge extends Data.TaggedError('WebhookBodyTooLarge')<{}> {}
-export class WebhookIngestionFailed extends Data.TaggedError('WebhookIngestionFailed')<{}> {}
+export class WebhookUnauthorized extends Schema.TaggedError<WebhookUnauthorized>()('WebhookUnauthorized', {}) {}
+export class WebhookInvalidPayload extends Schema.TaggedError<WebhookInvalidPayload>()('WebhookInvalidPayload', {}) {}
+export class WebhookBodyTooLarge extends Schema.TaggedError<WebhookBodyTooLarge>()('WebhookBodyTooLarge', {}) {}
+export class WebhookIngestionFailed extends Schema.TaggedError<WebhookIngestionFailed>()('WebhookIngestionFailed', {}) {}
 // Resolution errors: the provider is unknown or not enabled, or is enabled but
 // misconfigured. Never attach configuration values to these.
-export class WebhookProviderNotFound extends Data.TaggedError('WebhookProviderNotFound')<{}> {}
-export class WebhookConfigurationError extends Data.TaggedError('WebhookConfigurationError')<{}> {}
+export class WebhookProviderNotFound extends Schema.TaggedError<WebhookProviderNotFound>()('WebhookProviderNotFound', {}) {}
+export class WebhookConfigurationError extends Schema.TaggedError<WebhookConfigurationError>()('WebhookConfigurationError', {}) {}
 
 export type WebhookIngestionError = WebhookUnauthorized | WebhookInvalidPayload |
   WebhookBodyTooLarge | WebhookIngestionFailed

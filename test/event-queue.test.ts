@@ -1,6 +1,6 @@
 import { Effect, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
-import { decodeEventEnvelope, EventQueue, EventQueueLive } from '../src/event-queue'
+import { decodeEventEnvelope, EventQueue } from '../src/event-queue'
 import { event, sendResponse } from './fixtures'
 
 describe('envelope', () => {
@@ -35,13 +35,13 @@ describe('live queue', () => {
     const send = vi.fn(async () => sendResponse)
     const enriched = { ...event, transcript: 'must not leave worker' }
     await Effect.runPromise(Effect.flatMap(EventQueue, (queue) => queue.enqueue(enriched)).pipe(
-      Effect.provide(EventQueueLive({ send })),
+      Effect.provide(EventQueue.layer({ send })),
     ))
     expect(send).toHaveBeenCalledExactlyOnceWith(event, { contentType: 'json' })
   })
   it('sanitizes binding failures', async () => {
     const result = await Effect.runPromise(Effect.flatMap(EventQueue, (queue) => queue.enqueue(event)).pipe(
-      Effect.provide(EventQueueLive({ send: async () => { throw new Error('secret') } })),
+      Effect.provide(EventQueue.layer({ send: async () => { throw new Error('secret') } })),
       Effect.result,
     ))
     expect(Result.isFailure(result) && result.failure._tag).toBe('EnqueueFailed')

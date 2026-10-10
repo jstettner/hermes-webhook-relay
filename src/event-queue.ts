@@ -1,4 +1,4 @@
-import { Context, Data, DateTime, Effect, Exit, Layer, Schema } from 'effect'
+import { Context, DateTime, Effect, Exit, Layer, Schema } from 'effect'
 
 const Identifier = Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(512)))
 const decodeTimestamp = Schema.decodeUnknownExit(Schema.DateTimeUtcFromString)
@@ -23,26 +23,29 @@ export const EventEnvelope = Schema.Struct({
 
 export type EventEnvelope = typeof EventEnvelope.Type
 
-export class EnqueueFailed extends Data.TaggedError('EnqueueFailed')<{}> {}
+export class EnqueueFailed extends Schema.TaggedError<EnqueueFailed>()('EnqueueFailed', {}) {}
 
 export class EventQueue extends Context.Service<EventQueue, {
   readonly enqueue: (event: EventEnvelope) => Effect.Effect<void, EnqueueFailed>
-}>()('EventQueue') {}
-
-export const EventQueueLive = (binding: Pick<Queue<EventEnvelope>, 'send'>) =>
-  Layer.succeed(EventQueue, {
-    enqueue: (event) => Effect.tryPromise({
-      try: async () => { await binding.send({
-        version: event.version,
-        provider: event.provider,
-        eventId: event.eventId,
-        eventType: event.eventType,
-        sourceRecordId: event.sourceRecordId,
-        sourceTimestamp: event.sourceTimestamp,
-      }, { contentType: 'json' }) },
-      catch: () => new EnqueueFailed(),
-    }),
-  })
+}>()('hermes-webhook-relay/EventQueue') {
+  // A function of the binding rather than Config: the queue is an object, not a value.
+  static readonly layer = (binding: Pick<Queue<EventEnvelope>, 'send'>) =>
+    Layer.succeed(EventQueue, EventQueue.of({
+      enqueue: Effect.fn('EventQueue.enqueue')(function* (event: EventEnvelope) {
+        yield* Effect.tryPromise({
+          try: async () => { await binding.send({
+            version: event.version,
+            provider: event.provider,
+            eventId: event.eventId,
+            eventType: event.eventType,
+            sourceRecordId: event.sourceRecordId,
+            sourceTimestamp: event.sourceTimestamp,
+          }, { contentType: 'json' }) },
+          catch: () => new EnqueueFailed(),
+        })
+      }),
+    }))
+}
 
 export const decodeEventEnvelope = Schema.decodeUnknownEffect(EventEnvelope, {
   onExcessProperty: 'error',
