@@ -1,7 +1,7 @@
 import { Clock, Effect, Redacted, Result, Schema } from 'effect'
 import * as Hex from 'effect/encoding/Hex'
-import { EventEnvelope } from './event-queue'
-import { readBody, WebhookConfigurationError, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
+import { SourceTimestamp } from '../Event/EventEnvelope'
+import * as Webhook from '../Webhook/Webhook'
 
 // Pocket sends the full transcript and summaries, so allow long meetings.
 const MAX_BODY_BYTES = 2 * 1024 * 1024
@@ -15,11 +15,11 @@ const Payload = Schema.Struct({
     'transcript.edited', 'action_items.updated', 'recording.created', 'recording.deleted',
     'recording.merged', 'translation.completed',
   ]),
-  timestamp: EventEnvelope.fields.sourceTimestamp,
+  timestamp: SourceTimestamp,
   recording: Schema.Struct({ id: Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,512}$/))) }),
-})
+}).annotate({ identifier: 'PocketPayload' })
 
-export const PocketIngestionLive = (signingSecret: Redacted.Redacted<string>): Effect.Effect<WebhookIngestion, WebhookConfigurationError> =>
+export const ingestion = (signingSecret: Redacted.Redacted<string>): Effect.Effect<Webhook.Ingestion, Webhook.ConfigurationError> =>
   Effect.gen(function* () {
     // Pocket uses the secret string itself as the HMAC key; never attach it to errors.
     const key = yield* Effect.tryPromise({
@@ -29,39 +29,39 @@ export const PocketIngestionLive = (signingSecret: Redacted.Redacted<string>): E
         return crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
           { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
       },
-      catch: () => new WebhookConfigurationError(),
+      catch: () => new Webhook.ConfigurationError(),
     })
     return {
-      ingest: Effect.fn('PocketIngestion.ingest')(function* (request: Request) {
+      ingest: Effect.fn('Pocket.ingest')(function* (request: Request) {
         const timestamp = request.headers.get('x-heypocket-timestamp')
         const signature = request.headers.get('x-heypocket-signature')
         // Missing headers also reject legacy webhooks that were created without a secret.
         if (!timestamp || !/^\d{1,15}$/.test(timestamp) || !signature) {
-          return yield* Effect.fail(new WebhookUnauthorized())
+          return yield* Effect.fail(new Webhook.Unauthorized())
         }
         const now = yield* Clock.currentTimeMillis
         if (Math.abs(now - Number(timestamp)) > FRESHNESS_MS) {
-          return yield* Effect.fail(new WebhookUnauthorized())
+          return yield* Effect.fail(new Webhook.Unauthorized())
         }
         const hex = /^(?:sha256=)?([0-9a-f]{64})$/i.exec(signature)
         const digest = hex && Hex.decode(hex[1].toLowerCase())
-        if (!digest || Result.isFailure(digest)) return yield* Effect.fail(new WebhookUnauthorized())
-        const body = yield* readBody(request, MAX_BODY_BYTES)
+        if (!digest || Result.isFailure(digest)) return yield* Effect.fail(new Webhook.Unauthorized())
+        const body = yield* Webhook.readBody(request, MAX_BODY_BYTES)
         const prefix = new TextEncoder().encode(`${timestamp}.`)
         const signed = new Uint8Array(prefix.length + body.length)
         signed.set(prefix)
         signed.set(body, prefix.length)
         const verified = yield* Effect.tryPromise({
           try: () => crypto.subtle.verify('HMAC', key, digest.success, signed),
-          catch: () => new WebhookIngestionFailed(),
+          catch: () => new Webhook.IngestionFailed(),
         })
-        if (!verified) return yield* Effect.fail(new WebhookUnauthorized())
+        if (!verified) return yield* Effect.fail(new Webhook.Unauthorized())
         const text = yield* Effect.try({
           try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body),
-          catch: () => new WebhookInvalidPayload(),
+          catch: () => new Webhook.InvalidPayload(),
         })
         const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Payload))(text).pipe(
-          Effect.mapError(() => new WebhookInvalidPayload()),
+          Effect.mapError(() => new Webhook.InvalidPayload()),
         )
         // Pocket sends no event ID. Derive one from signed body fields rather than the
         // delivery header, so a retry that is re-signed with a new header timestamp
@@ -69,7 +69,7 @@ export const PocketIngestionLive = (signingSecret: Redacted.Redacted<string>): E
         const eventId = yield* Effect.tryPromise({
           try: async () => Hex.encode(new Uint8Array(await crypto.subtle.digest('SHA-256',
             new TextEncoder().encode(`${payload.event}\n${payload.recording.id}\n${payload.timestamp}`)))),
-          catch: () => new WebhookIngestionFailed(),
+          catch: () => new Webhook.IngestionFailed(),
         })
         return {
           version: 1 as const,

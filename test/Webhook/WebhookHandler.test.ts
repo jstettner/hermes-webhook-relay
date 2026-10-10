@@ -1,11 +1,11 @@
 import { expect, it, vi } from '@effect/vitest'
 import { Effect, Redacted } from 'effect'
-import { EnqueueFailed, EventQueue } from '../src/event-queue'
-import { GranolaIngestionLive } from '../src/granola'
-import { webhookHandler } from '../src/routes/webhook'
-import { event, ingestFixture, providersFixture, request } from './fixtures'
+import { EnqueueFailed, EventQueue } from '../../src/Event/EventQueue'
+import * as Granola from '../../src/Provider/Granola'
+import * as WebhookHandler from '../../src/Webhook/WebhookHandler'
+import { event, ingestFixture, providersFixture, request } from '../fixtures'
 
-const granolaHandler = webhookHandler('granola')
+const granolaHandler = WebhookHandler.handle('granola')
 
 it.effect('enqueues the ingested envelope and returns 202', () => {
   const enqueue = vi.fn(() => Effect.void)
@@ -23,7 +23,7 @@ it.effect('fails closed without calling the queue', () => {
     expect(yield* Effect.promise(() => response.json())).toEqual({ error: 'unauthorized' })
     expect(enqueue).not.toHaveBeenCalled()
   }).pipe(
-    Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make('whsec_dGVzdC1zZWNyZXQ=')) })),
+    Effect.provide(providersFixture({ granola: Granola.ingestion(Redacted.make('whsec_dGVzdC1zZWNyZXQ=')) })),
     Effect.provideService(EventQueue, { enqueue }),
   )
 })

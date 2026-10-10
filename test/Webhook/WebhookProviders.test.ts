@@ -1,13 +1,13 @@
 import { describe, expect, it, layer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
-import { WebhookProviders } from '../src/providers'
+import * as WebhookProviders from '../../src/Webhook/WebhookProviders'
 
 const secrets = { GRANOLA_SIGNING_SECRET: 'whsec_dGVzdC1zZWNyZXQ=', POCKET_SIGNING_SECRET: 'pocket-secret' }
 const fromEnv = (env: object) =>
   WebhookProviders.layer.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))))
 // The tag a resolution ends with. A ConfigError from building the registry is caught
 // where the layer is provided.
-const tag = (name: string) => Effect.flatMap(WebhookProviders, (registry) => registry.resolve(name)).pipe(
+const tag = (name: string) => Effect.flatMap(WebhookProviders.WebhookProviders, (registry) => registry.resolve(name)).pipe(
   Effect.result,
   Effect.map((result) => Result.isFailure(result) ? result.failure._tag : 'Resolved'),
 )

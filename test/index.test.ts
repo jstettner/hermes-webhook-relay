@@ -1,5 +1,5 @@
 import { Effect } from 'effect'
-import type { Bindings } from '../src/index'
+import type { Bindings } from '../src/Layers'
 import { expect, it, vi } from 'vitest'
 import app from '../src/index'
 import { event, fixtureApp, ingestFixture, providersFixture, sendResponse } from './fixtures'

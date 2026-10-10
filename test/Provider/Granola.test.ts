@@ -1,13 +1,13 @@
 import { expect, it, vi } from '@effect/vitest'
 import { Effect, Fiber, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { GranolaIngestionLive } from '../src/granola'
-import { EventQueue } from '../src/event-queue'
-import { webhookHandler } from '../src/routes/webhook'
-import app from '../src/index'
-import { providersFixture, sendResponse } from './fixtures'
+import * as Granola from '../../src/Provider/Granola'
+import { EventQueue } from '../../src/Event/EventQueue'
+import * as WebhookHandler from '../../src/Webhook/WebhookHandler'
+import app from '../../src/index'
+import { providersFixture, sendResponse } from '../fixtures'
 
-const granolaHandler = webhookHandler('granola')
+const granolaHandler = WebhookHandler.handle('granola')
 
 const secret = 'whsec_dGVzdC1zZWNyZXQ='
 const now = 1800000000
@@ -42,7 +42,7 @@ const handle = Effect.fn(function* (request: Request, configuredSecret = secret)
   yield* TestClock.setTime(now * 1000)
   const enqueue = vi.fn(() => Effect.void)
   const response = yield* granolaHandler(request).pipe(
-    Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make(configuredSecret)) })),
+    Effect.provide(providersFixture({ granola: Granola.ingestion(Redacted.make(configuredSecret)) })),
     Effect.provideService(EventQueue, { enqueue }),
   )
   return { response, enqueue }
@@ -174,7 +174,7 @@ it.effect('cancels a stalled body on ingestion timeout', () => Effect.gen(functi
   const enqueue = vi.fn(() => Effect.void)
   // Import the key up front: the timeout starts at ingest, so the fiber must reach
   // the stalled read without pending real async work before the clock moves.
-  const ingestion = yield* GranolaIngestionLive(Redacted.make(secret))
+  const ingestion = yield* Granola.ingestion(Redacted.make(secret))
   const fiber = yield* granolaHandler(request).pipe(
     Effect.provide(providersFixture({ granola: Effect.succeed(ingestion) })),
     Effect.provideService(EventQueue, { enqueue }),
@@ -197,7 +197,7 @@ it.effect('accepts the exact body-size limit', () => Effect.gen(function* () {
   expect((yield* handle(yield* signed(body.padEnd(65536, ' ')))).response.status).toBe(202)
 }))
 it.effect.each(['test-secret', 'whsec_', 'whsec_%%%', 'whsec_YR==', 'whsec_YQ'])('rejects an invalid secret format without exposing it: %s', (value) => Effect.gen(function* () {
-  const result = yield* Effect.result(GranolaIngestionLive(Redacted.make(value)))
+  const result = yield* Effect.result(Granola.ingestion(Redacted.make(value)))
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) {
     expect(result.failure._tag).toBe('WebhookConfigurationError')

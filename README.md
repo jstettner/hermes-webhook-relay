@@ -32,8 +32,8 @@ malformed returns sanitized 500 on that provider's route only. A
 `WEBHOOK_PROVIDERS` value naming an unknown provider returns sanitized 500 on every
 webhook route.
 
-To add a provider, implement a `WebhookIngestion` builder (see `src/granola.ts`)
-and register it with its secret binding in `src/providers.ts`.
+To add a provider, implement a `Webhook.Ingestion` builder (see `src/Provider/Granola.ts`)
+and register it with its secret binding in `src/Webhook/WebhookProviders.ts`.
 
 ## Providers
 
@@ -83,21 +83,27 @@ not written into the committed types.
 
 ## Structure
 
-- `src/event-queue.ts`: bounded metadata schema/type, strict decoder, the
-  `EventQueue` service with its `EventQueue.layer(binding)` Cloudflare producer,
-  and typed `EnqueueFailed`.
-- `src/webhook.ts`: provider-neutral ingestion and resolution errors, the
-  `WebhookIngestion` shape, and bounded body reading.
-- `src/providers.ts`: the provider registry and the `WebhookProviders` service
-  that resolves a provider name to its ingestion. Its static `layer` reads
-  `WEBHOOK_PROVIDERS` and each enabled provider's redacted secret through Effect
-  `Config`, failing with `ConfigError` on a malformed list.
-- `src/granola.ts`, `src/pocket.ts`: ingestion builders taking a redacted secret,
-  signature verification, and payload schemas.
-- `src/routes/webhook.ts`: resolve → ingest → enqueue orchestration and sanitized
-  HTTP outcomes shared by every provider; no layer wiring.
-- `src/index.ts`: typed Hono app factory, `AppLive` (both service layers with a
-  `ConfigProvider` over the bindings), and the Effect execution boundary.
+Code is organized by domain under `src/<Domain>/`. Each module is imported as a
+namespace (`import * as Webhook from './Webhook/Webhook'`), so names inside it
+stay short (`Webhook.Unauthorized`, `EventQueue.layer`). Tests mirror `src/`.
+
+- `src/Event/EventEnvelope.ts`: bounded metadata schema/type, `SourceTimestamp`,
+  and the strict `decode`.
+- `src/Event/EventQueue.ts`: the `EventQueue` service, its `layer(binding)`
+  Cloudflare producer, and typed `EnqueueFailed`.
+- `src/Webhook/Webhook.ts`: provider-neutral ingestion and resolution errors, the
+  `Ingestion` shape, and bounded body reading.
+- `src/Webhook/WebhookProviders.ts`: the provider registry and the
+  `WebhookProviders` service that resolves a provider name to its ingestion. Its
+  `layer` reads `WEBHOOK_PROVIDERS` and each enabled provider's redacted secret
+  through Effect `Config`, failing with `ConfigError` on a malformed list.
+- `src/Webhook/WebhookHandler.ts`: `handle`, the resolve → ingest → enqueue
+  orchestration and sanitized HTTP outcomes shared by every provider; no layer wiring.
+- `src/Provider/Granola.ts`, `src/Provider/Pocket.ts`: `ingestion` builders taking
+  a redacted secret, signature verification, and payload schemas.
+- `src/Layers.ts`: `Bindings` and `AppLayer` (both service layers with a
+  `ConfigProvider` over the bindings); the only place that wires layers.
+- `src/index.ts`: typed Hono app factory and the Effect execution boundary.
 
 The envelope contains only version, provider, event ID/type, source record ID,
 and UTC source timestamp. Identifiers are 1–512 characters; timestamps use
@@ -107,7 +113,7 @@ adapter explicitly selects fields rather than forwarding arbitrary objects.
 
 The handler depends only on the `WebhookProviders` and `EventQueue` services.
 `createApp` takes one function from bindings to the layer that provides them; the
-production export passes `AppLive`, which always uses the verifying providers.
+production export passes `AppLayer`, which always uses the verifying providers.
 Tests pass fixture `WebhookProviders` layers through the same boundary, with
 recording or failing queue bindings; fixtures do not require live configuration.
 This seam has no environment flag or HTTP bypass.

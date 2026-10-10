@@ -1,13 +1,13 @@
 import { expect, it, vi } from '@effect/vitest'
 import { Effect, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { PocketIngestionLive } from '../src/pocket'
-import { EventQueue } from '../src/event-queue'
-import { webhookHandler } from '../src/routes/webhook'
-import app from '../src/index'
-import { providersFixture, sendResponse } from './fixtures'
+import * as Pocket from '../../src/Provider/Pocket'
+import { EventQueue } from '../../src/Event/EventQueue'
+import * as WebhookHandler from '../../src/Webhook/WebhookHandler'
+import app from '../../src/index'
+import { providersFixture, sendResponse } from '../fixtures'
 
-const pocketHandler = webhookHandler('pocket')
+const pocketHandler = WebhookHandler.handle('pocket')
 
 const secret = 'pocket-test-secret'
 const now = 1800000000000
@@ -53,7 +53,7 @@ const handle = Effect.fn(function* (request: Request, configuredSecret = secret)
   yield* TestClock.setTime(now)
   const enqueue = vi.fn(() => Effect.void)
   const response = yield* pocketHandler(request).pipe(
-    Effect.provide(providersFixture({ pocket: PocketIngestionLive(Redacted.make(configuredSecret)) })),
+    Effect.provide(providersFixture({ pocket: Pocket.ingestion(Redacted.make(configuredSecret)) })),
     Effect.provideService(EventQueue, { enqueue }),
   )
   return { response, enqueue }
@@ -175,7 +175,7 @@ it.effect('accepts a large transcript up to the 2 MiB limit and rejects one byte
   yield* rejected(yield* signed(body.padEnd(2 * 1024 * 1024 + 1, ' ')), 413)
 }))
 it.effect('rejects an oversized secret', () => Effect.gen(function* () {
-  const result = yield* Effect.result(PocketIngestionLive(Redacted.make('x'.repeat(1025))))
+  const result = yield* Effect.result(Pocket.ingestion(Redacted.make('x'.repeat(1025))))
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) expect(result.failure._tag).toBe('WebhookConfigurationError')
 }))

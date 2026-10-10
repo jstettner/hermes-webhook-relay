@@ -1,25 +1,25 @@
 import { Effect } from 'effect'
-import { EventQueue } from '../event-queue'
-import { WebhookProviders } from '../providers'
-import { WebhookIngestionFailed } from '../webhook'
+import { EventQueue } from '../Event/EventQueue'
+import * as Webhook from './Webhook'
+import { WebhookProviders } from './WebhookProviders'
 
 // Bounds header checks, body reading and verification. The queue send is
 // bounded separately by the request timeout at the app boundary.
 const INGESTION_TIMEOUT = '10 seconds'
 
-const acceptWebhook = (provider: string, request: Request) =>
+const accept = (provider: string, request: Request) =>
   Effect.gen(function* () {
     const ingestion = yield* (yield* WebhookProviders).resolve(provider)
     const event = yield* ingestion.ingest(request).pipe(
-      Effect.timeoutOrElse({ duration: INGESTION_TIMEOUT, orElse: () => Effect.fail(new WebhookIngestionFailed()) }),
+      Effect.timeoutOrElse({ duration: INGESTION_TIMEOUT, orElse: () => Effect.fail(new Webhook.IngestionFailed()) }),
     )
     const queue = yield* EventQueue
     yield* queue.enqueue(event)
   })
 
 // One error → HTTP mapping for every provider, so they cannot drift apart.
-export const webhookHandler = (provider: string) => (request: Request) =>
-  Effect.suspend(() => acceptWebhook(provider, request)).pipe(
+export const handle = (provider: string) => (request: Request) =>
+  Effect.suspend(() => accept(provider, request)).pipe(
     Effect.as(new Response(null, { status: 202 })),
     Effect.catchTags({
       WebhookProviderNotFound: () => Effect.succeed(Response.json({ error: 'not_found' }, { status: 404 })),
