@@ -1,16 +1,16 @@
-import { Clock, Effect, Redacted } from 'effect'
+import { Clock, Effect, Redacted, Result } from 'effect'
 import { expect, it, vi } from 'vitest'
 import { PocketIngestionLive } from '../src/pocket'
 import { EventQueue } from '../src/event-queue'
 import { webhookHandler } from '../src/routes/webhook'
 import app from '../src/index'
-import { providersFixture, sendResponse } from './fixtures'
+import { fixedClock, providersFixture, sendResponse } from './fixtures'
 
 const pocketHandler = webhookHandler('pocket')
 
 const secret = 'pocket-test-secret'
 const now = 1800000000000
-const clock = Object.assign(Clock.make(), { currentTimeMillis: Effect.succeed(now), unsafeCurrentTimeMillis: () => now })
+const clock = fixedClock(now)
 const payload = {
   event: 'summary.completed',
   timestamp: '2026-02-18T12:00:00.000Z',
@@ -52,7 +52,7 @@ async function handle(request: Request, configuredSecret = secret) {
   const enqueue = vi.fn(() => Effect.void)
   const response = await Effect.runPromise(pocketHandler(request).pipe(
     Effect.provide(providersFixture({ pocket: PocketIngestionLive(Redacted.make(configuredSecret)) })),
-    Effect.provideService(EventQueue, { enqueue }), Effect.withClock(clock),
+    Effect.provideService(EventQueue, { enqueue }), Effect.provideService(Clock.Clock, clock),
   ))
   return { response, enqueue }
 }
@@ -170,7 +170,7 @@ it('accepts a large transcript up to the 2 MiB limit and rejects one byte more',
   await rejected(await signed(body.padEnd(2 * 1024 * 1024 + 1, ' ')), 413)
 })
 it('rejects an oversized secret', async () => {
-  const result = await Effect.runPromise(Effect.either(PocketIngestionLive(Redacted.make('x'.repeat(1025)))))
-  expect(result._tag).toBe('Left')
-  if (result._tag === 'Left') expect(result.left._tag).toBe('WebhookConfigurationError')
+  const result = await Effect.runPromise(Effect.result(PocketIngestionLive(Redacted.make('x'.repeat(1025)))))
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) expect(result.failure._tag).toBe('WebhookConfigurationError')
 })

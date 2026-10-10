@@ -11,7 +11,7 @@ const acceptWebhook = (provider: string, request: Request) =>
   Effect.gen(function* () {
     const ingestion = yield* (yield* WebhookProviders).resolve(provider)
     const event = yield* ingestion.ingest(request).pipe(
-      Effect.timeoutFail({ duration: INGESTION_TIMEOUT, onTimeout: () => new WebhookIngestionFailed() }),
+      Effect.timeoutOrElse({ duration: INGESTION_TIMEOUT, orElse: () => Effect.fail(new WebhookIngestionFailed()) }),
     )
     const queue = yield* EventQueue
     yield* queue.enqueue(event)

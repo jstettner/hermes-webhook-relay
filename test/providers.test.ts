@@ -1,16 +1,16 @@
-import { Effect, Either, Layer } from 'effect'
+import { Effect, Layer, Result } from 'effect'
 import { expect, it } from 'vitest'
 import { WebhookProviders, WebhookProvidersFromEnv } from '../src/providers'
 import type { WebhookIngestion } from '../src/webhook'
 
 const secrets = { GRANOLA_SIGNING_SECRET: 'whsec_dGVzdC1zZWNyZXQ=', POCKET_SIGNING_SECRET: 'pocket-secret' }
-const resolve = (env: object, name: string) => Effect.runPromise(Effect.either(
+const resolve = (env: object, name: string) => Effect.runPromise(Effect.result(
   Effect.flatMap(WebhookProviders, (registry) => registry.resolve(name)).pipe(
     Effect.provide(WebhookProvidersFromEnv(env)),
   ),
 ))
-const tag = (result: Either.Either<WebhookIngestion, { _tag: string }>) =>
-  Either.isLeft(result) ? result.left._tag : 'Resolved'
+const tag = (result: Result.Result<WebhookIngestion, { _tag: string }>) =>
+  Result.isFailure(result) ? result.failure._tag : 'Resolved'
 
 it.each([
   ['granola,pocket', 'granola', 'Resolved'],
@@ -35,6 +35,6 @@ it('ignores non-string bindings such as the queue', async () => {
   expect(tag(await resolve(env, 'granola'))).toBe('Resolved')
 })
 it('fails layer construction, not resolution, for a malformed list', async () => {
-  const built = await Effect.runPromise(Effect.either(Layer.build(WebhookProvidersFromEnv({ WEBHOOK_PROVIDERS: 'nope' })).pipe(Effect.scoped)))
-  expect(Either.isLeft(built) && built.left._tag).toBe('WebhookConfigurationError')
+  const built = await Effect.runPromise(Effect.result(Layer.build(WebhookProvidersFromEnv({ WEBHOOK_PROVIDERS: 'nope' })).pipe(Effect.scoped)))
+  expect(Result.isFailure(built) && built.failure._tag).toBe('WebhookConfigurationError')
 })

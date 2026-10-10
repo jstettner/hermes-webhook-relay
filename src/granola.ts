@@ -1,23 +1,24 @@
-import { Clock, Effect, Either, Encoding, Redacted, Schema } from 'effect'
+import { Clock, Effect, Redacted, Result, Schema } from 'effect'
+import * as Base64 from 'effect/encoding/Base64'
 import { EventEnvelope } from './event-queue'
 import { readBody, WebhookConfigurationError, WebhookIngestionFailed, WebhookInvalidPayload, WebhookUnauthorized, type WebhookIngestion } from './webhook'
 
 const MAX_BODY_BYTES = 64 * 1024
-const Identifier = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9_-]{1,512}$/))
+const Identifier = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,512}$/)))
 const fields = {
   event_id: Identifier,
-  note_id: Schema.String.pipe(Schema.pattern(/^not_[a-zA-Z0-9]{14}$/)),
+  note_id: Schema.String.pipe(Schema.check(Schema.isPattern(/^not_[a-zA-Z0-9]{14}$/))),
   occurred_at: EventEnvelope.fields.sourceTimestamp,
 }
 // Ignore additive provider fields, but only normalize explicitly selected metadata.
-const Payload = Schema.Union(
-  Schema.Struct({ ...fields, event_type: Schema.Literal('note.generated', 'note.access_granted') }),
+const Payload = Schema.Union([
+  Schema.Struct({ ...fields, event_type: Schema.Literals(['note.generated', 'note.access_granted']) }),
   Schema.Struct({
     ...fields,
     event_type: Schema.Literal('note.edited'),
-    data: Schema.Struct({ changed_fields: Schema.Tuple(Schema.Literal('summary')) }),
+    data: Schema.Struct({ changed_fields: Schema.Tuple([Schema.Literal('summary')]) }),
   }),
-)
+])
 
 export const GranolaIngestionLive = (signingSecret: Redacted.Redacted<string>): Effect.Effect<WebhookIngestion, WebhookConfigurationError> =>
   Effect.gen(function* () {
@@ -27,10 +28,10 @@ export const GranolaIngestionLive = (signingSecret: Redacted.Redacted<string>): 
         const secret = Redacted.value(signingSecret)
         if (!secret.startsWith('whsec_') || secret.length > 1024) throw new Error('Invalid secret')
         const encoded = secret.slice(6)
-        const decoded = Encoding.decodeBase64(encoded)
-        if (Either.isLeft(decoded) || decoded.right.length === 0 ||
-          Encoding.encodeBase64(decoded.right) !== encoded) throw new Error('Invalid secret')
-        return crypto.subtle.importKey('raw', decoded.right,
+        const decoded = Base64.decode(encoded)
+        if (Result.isFailure(decoded) || decoded.success.length === 0 ||
+          Base64.encode(decoded.success) !== encoded) throw new Error('Invalid secret')
+        return crypto.subtle.importKey('raw', decoded.success,
           { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'])
       },
       catch: () => new WebhookConfigurationError(),
@@ -54,10 +55,10 @@ export const GranolaIngestionLive = (signingSecret: Redacted.Redacted<string>): 
         const candidates = entries.flatMap((entry) => {
           const match = /^v1,([^,]+)$/.exec(entry)
           if (!match) return []
-          const decoded = Encoding.decodeBase64(match[1])
-          if (Either.isLeft(decoded) || decoded.right.length !== 32 ||
-            Encoding.encodeBase64(decoded.right) !== match[1]) return []
-          return [decoded.right]
+          const decoded = Base64.decode(match[1])
+          if (Result.isFailure(decoded) || decoded.success.length !== 32 ||
+            Base64.encode(decoded.success) !== match[1]) return []
+          return [decoded.success]
         })
         if (!candidates.length) return yield* Effect.fail(new WebhookUnauthorized())
         const body = yield* readBody(request, MAX_BODY_BYTES)
@@ -79,7 +80,7 @@ export const GranolaIngestionLive = (signingSecret: Redacted.Redacted<string>): 
           try: () => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body),
           catch: () => new WebhookInvalidPayload(),
         })
-        const payload = yield* Schema.decodeUnknown(Schema.parseJson(Payload))(text).pipe(
+        const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Payload))(text).pipe(
           Effect.mapError(() => new WebhookInvalidPayload()),
         )
         if (payload.event_id !== id) return yield* Effect.fail(new WebhookInvalidPayload())

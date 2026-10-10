@@ -28,7 +28,7 @@ export const readBody = (request: Request, maxBytes: number) => Effect.suspend((
     onError: () => new WebhookInvalidPayload(),
     releaseLockOnEnd: true,
   }).pipe(
-    Stream.runFoldEffect(0, (length, chunk) => {
+    Stream.runFoldEffect(() => 0, (length, chunk) => {
       const nextLength = length + chunk.byteLength
       if (nextLength > maxBytes) return Effect.fail(new WebhookBodyTooLarge())
       return Effect.sync(() => {

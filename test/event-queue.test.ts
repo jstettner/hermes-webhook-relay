@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import { decodeEventEnvelope, EventQueue, EventQueueLive } from '../src/event-queue'
 import { event, sendResponse } from './fixtures'
@@ -25,8 +25,8 @@ describe('envelope', () => {
     { sourceTimestamp: '2026-09-16T12:00:00.12Z' },
     { sourceTimestamp: '2026-09-16T12:00:00.1234Z' },
   ])('rejects invalid metadata %j', async (patch) => {
-    const result = await Effect.runPromise(Effect.either(decodeEventEnvelope({ ...event, ...patch })))
-    expect(Either.isLeft(result)).toBe(true)
+    const result = await Effect.runPromise(Effect.result(decodeEventEnvelope({ ...event, ...patch })))
+    expect(Result.isFailure(result)).toBe(true)
   })
 })
 
@@ -42,9 +42,9 @@ describe('live queue', () => {
   it('sanitizes binding failures', async () => {
     const result = await Effect.runPromise(Effect.flatMap(EventQueue, (queue) => queue.enqueue(event)).pipe(
       Effect.provide(EventQueueLive({ send: async () => { throw new Error('secret') } })),
-      Effect.either,
+      Effect.result,
     ))
-    expect(Either.isLeft(result) && result.left._tag).toBe('EnqueueFailed')
+    expect(Result.isFailure(result) && result.failure._tag).toBe('EnqueueFailed')
     expect(JSON.stringify(result)).not.toContain('secret')
   })
 })

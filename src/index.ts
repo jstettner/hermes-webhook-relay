@@ -29,7 +29,7 @@ export const createApp = (makeLayer: AppLayer) => {
     Effect.runPromise(webhookHandler(c.req.param('provider'))(c.req.raw).pipe(
       Effect.provide(makeLayer(c.env)),
       Effect.timeout(REQUEST_TIMEOUT),
-      Effect.catchAllCause(() => Effect.succeed(c.json({ error: 'internal_error' }, 500))),
+      Effect.catchCause(() => Effect.succeed(c.json({ error: 'internal_error' }, 500))),
     )))
   app.onError((_error, c) => c.json({ error: 'internal_error' }, 500))
   return app

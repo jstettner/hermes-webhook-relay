@@ -1,20 +1,20 @@
-import { Context, Data, DateTime, Effect, Either, Layer, Schema } from 'effect'
+import { Context, Data, DateTime, Effect, Exit, Layer, Schema } from 'effect'
 
-const Identifier = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(512))
-const decodeTimestamp = Schema.decodeUnknownEither(Schema.DateTimeUtc)
-const SourceTimestamp = Schema.String.pipe(
-  Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/),
-  Schema.filter((value) => {
+const Identifier = Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(512)))
+const decodeTimestamp = Schema.decodeUnknownExit(Schema.DateTimeUtcFromString)
+const SourceTimestamp = Schema.String.pipe(Schema.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/),
+  Schema.makeFilter((value: string) => {
     const decoded = decodeTimestamp(value)
     // Reject calendar rollover while preserving the provider's original string.
-    return Either.isRight(decoded) && DateTime.formatIso(decoded.right) ===
+    return Exit.isSuccess(decoded) && DateTime.formatIso(decoded.value) ===
       (value.length === 20 ? value.replace('Z', '.000Z') : value)
-  }, { message: () => 'Expected a valid UTC ISO timestamp' }),
-)
+  }, { message: 'Expected a valid UTC ISO timestamp' }),
+))
 
 export const EventEnvelope = Schema.Struct({
   version: Schema.Literal(1),
-  provider: Schema.Literal('granola', 'pocket'),
+  provider: Schema.Literals(['granola', 'pocket']),
   eventId: Identifier,
   eventType: Identifier,
   sourceRecordId: Identifier,
@@ -25,9 +25,9 @@ export type EventEnvelope = typeof EventEnvelope.Type
 
 export class EnqueueFailed extends Data.TaggedError('EnqueueFailed')<{}> {}
 
-export class EventQueue extends Context.Tag('EventQueue')<EventQueue, {
+export class EventQueue extends Context.Service<EventQueue, {
   readonly enqueue: (event: EventEnvelope) => Effect.Effect<void, EnqueueFailed>
-}>() {}
+}>()('EventQueue') {}
 
 export const EventQueueLive = (binding: Pick<Queue<EventEnvelope>, 'send'>) =>
   Layer.succeed(EventQueue, {
@@ -44,6 +44,6 @@ export const EventQueueLive = (binding: Pick<Queue<EventEnvelope>, 'send'>) =>
     }),
   })
 
-export const decodeEventEnvelope = Schema.decodeUnknown(EventEnvelope, {
+export const decodeEventEnvelope = Schema.decodeUnknownEffect(EventEnvelope, {
   onExcessProperty: 'error',
 })
