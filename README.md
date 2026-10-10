@@ -1,6 +1,6 @@
 # hermes-webhook-relay
 
-A Hono Cloudflare Worker with Effect-based webhook ingestion and queueing for
+A Hono Cloudflare Worker with Effect v4 webhook ingestion and queueing for
 Granola and Pocket.
 
 ## Configuration
@@ -21,9 +21,12 @@ None of these are checked in:
 | `granola` | `POST /webhooks/granola` | `GRANOLA_SIGNING_SECRET` |
 | `pocket` | `POST /webhooks/pocket` | `POCKET_SIGNING_SECRET` |
 
-Configuration is read with Effect `Config` from a `ConfigProvider` built over the
-string-valued bindings, so it must be a plain string (not a JSON array). Unset or
-empty `WEBHOOK_PROVIDERS` accepts nothing. A provider that is unregistered or not
+Configuration is read with Effect `Config` from a `ConfigProvider` over the Worker
+bindings. `WEBHOOK_PROVIDERS` is a comma-separated string (names are trimmed) or,
+where JSON vars are supported (a dashboard JSON var with `keep_vars`), a JSON array
+such as `["granola","pocket"]`. Secrets and `.dev.vars` values are always strings,
+so a JSON-looking string there is not parsed and counts as malformed. Unset or
+empty `WEBHOOK_PROVIDERS` accepts nothing; a trailing comma is malformed. A provider that is unregistered or not
 listed returns 404 `not_found`. A listed provider whose secret is missing, empty or
 malformed returns sanitized 500 on that provider's route only. A
 `WEBHOOK_PROVIDERS` value naming an unknown provider returns sanitized 500 on every
@@ -80,20 +83,21 @@ not written into the committed types.
 
 ## Structure
 
-- `src/event-queue.ts`: bounded metadata schema/type, strict decoder, `EventQueue`
-  service, typed `EnqueueFailed`, and live Cloudflare producer layer.
+- `src/event-queue.ts`: bounded metadata schema/type, strict decoder, the
+  `EventQueue` service with its `EventQueue.layer(binding)` Cloudflare producer,
+  and typed `EnqueueFailed`.
 - `src/webhook.ts`: provider-neutral ingestion and resolution errors, the
   `WebhookIngestion` shape, and bounded body reading.
-- `src/providers.ts`: the provider registry, the `WebhookProviders` service that
-  resolves a provider name to its ingestion, the `ConfigProvider` over Worker
-  bindings, and the live layer that reads `WEBHOOK_PROVIDERS` and each provider's
-  redacted secret through Effect `Config`.
+- `src/providers.ts`: the provider registry and the `WebhookProviders` service
+  that resolves a provider name to its ingestion. Its static `layer` reads
+  `WEBHOOK_PROVIDERS` and each enabled provider's redacted secret through Effect
+  `Config`, failing with `ConfigError` on a malformed list.
 - `src/granola.ts`, `src/pocket.ts`: ingestion builders taking a redacted secret,
   signature verification, and payload schemas.
 - `src/routes/webhook.ts`: resolve → ingest → enqueue orchestration and sanitized
   HTTP outcomes shared by every provider; no layer wiring.
-- `src/index.ts`: typed Hono app factory, the `AppLive` layer built from bindings,
-  and the Effect execution boundary.
+- `src/index.ts`: typed Hono app factory, `AppLive` (both service layers with a
+  `ConfigProvider` over the bindings), and the Effect execution boundary.
 
 The envelope contains only version, provider, event ID/type, source record ID,
 and UTC source timestamp. Identifiers are 1–512 characters; timestamps use
@@ -107,6 +111,12 @@ production export passes `AppLive`, which always uses the verifying providers.
 Tests pass fixture `WebhookProviders` layers through the same boundary, with
 recording or failing queue bindings; fixtures do not require live configuration.
 This seam has no environment flag or HTTP bypass.
+
+Tests use Vitest. Effect-level tests (ingestion, providers, handler, queue) run
+with `@effect/vitest` `it.effect`, fixing time and driving the ingestion timeout
+with `TestClock`; provider tests build config with `ConfigProvider.fromUnknown`.
+Tests through `app.request` stay plain async tests and exercise the HTTP contract
+against the real Worker entry point.
 
 HTTP 202 means the queue send completed;
 queue failure returns 503 `enqueue_failed`, and unexpected failures return 500
