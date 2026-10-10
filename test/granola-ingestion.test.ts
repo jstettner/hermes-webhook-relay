@@ -1,16 +1,16 @@
-import { Clock, Effect, Redacted, Result } from 'effect'
-import { expect, it, vi } from 'vitest'
+import { expect, it, vi } from '@effect/vitest'
+import { Effect, Fiber, Redacted, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 import { GranolaIngestionLive } from '../src/granola'
 import { EventQueue } from '../src/event-queue'
 import { webhookHandler } from '../src/routes/webhook'
 import app from '../src/index'
-import { fixedClock, providersFixture, sendResponse } from './fixtures'
+import { providersFixture, sendResponse } from './fixtures'
 
 const granolaHandler = webhookHandler('granola')
 
 const secret = 'whsec_dGVzdC1zZWNyZXQ='
 const now = 1800000000
-const clock = fixedClock(now * 1000)
 const payload = {
   event_id: 'event_123', event_type: 'note.generated',
   note_id: 'not_1d3tmYTlCICgjy', occurred_at: '2026-01-27T15:30:00Z',
@@ -19,7 +19,7 @@ const expected = {
   version: 1, provider: 'granola', eventId: payload.event_id,
   eventType: payload.event_type, sourceRecordId: payload.note_id, sourceTimestamp: payload.occurred_at,
 }
-async function signed(body: string | Uint8Array<ArrayBuffer> = JSON.stringify(payload), timestamp = String(now)) {
+const signed = (body: string | Uint8Array<ArrayBuffer> = JSON.stringify(payload), timestamp = String(now)) => Effect.promise(async () => {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('test-secret'),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   const prefix = new TextEncoder().encode(`${payload.event_id}.${timestamp}.`)
@@ -35,34 +35,37 @@ async function signed(body: string | Uint8Array<ArrayBuffer> = JSON.stringify(pa
       'webhook-signature': `v1,${btoa(String.fromCharCode(...new Uint8Array(signature)))}`,
     },
   })
-}
-async function handle(request: Request, configuredSecret = secret) {
+})
+const json = (response: Response) => Effect.promise(() => response.json())
+// Handles the request at the fixed wall time `now`.
+const handle = Effect.fn(function* (request: Request, configuredSecret = secret) {
+  yield* TestClock.setTime(now * 1000)
   const enqueue = vi.fn(() => Effect.void)
-  const response = await Effect.runPromise(granolaHandler(request).pipe(
+  const response = yield* granolaHandler(request).pipe(
     Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make(configuredSecret)) })),
-    Effect.provideService(EventQueue, { enqueue }), Effect.provideService(Clock.Clock, clock),
-  ))
+    Effect.provideService(EventQueue, { enqueue }),
+  )
   return { response, enqueue }
-}
-async function rejected(request: Request, status: number) {
-  const { response, enqueue } = await handle(request)
+})
+const rejected = Effect.fn(function* (request: Request, status: number) {
+  const { response, enqueue } = yield* handle(request)
   expect(response.status).toBe(status)
   expect(enqueue).not.toHaveBeenCalled()
   return response
-}
+})
 
-it.each(['note.generated', 'note.edited', 'note.access_granted'])('normalizes signed %s and strips unknown fields', async (event_type) => {
+it.effect.each(['note.generated', 'note.edited', 'note.access_granted'])('normalizes signed %s and strips unknown fields', (event_type) => Effect.gen(function* () {
   const body = JSON.stringify({ ...payload, event_type, data: { changed_fields: ['summary'] }, private: '秘密' }, null, 2)
-  const { response, enqueue } = await handle(await signed(body))
+  const { response, enqueue } = yield* handle(yield* signed(body))
   expect(response.status).toBe(202)
   expect(enqueue).toHaveBeenCalledExactlyOnceWith({ ...expected, eventType: event_type })
-})
+}))
 it.each([false, true])('runs live ingestion through the app (queue fails: %s)', async (fails) => {
   const send = vi.fn(async () => {
     if (fails) throw new Error('private queue error')
     return sendResponse
   })
-  const request = await signed(undefined, String(Math.floor(Date.now() / 1000)))
+  const request = await Effect.runPromise(signed(undefined, String(Math.floor(Date.now() / 1000))))
   const response = await app.request(request, {}, {
     WEBHOOK_PROVIDERS: 'granola', GRANOLA_SIGNING_SECRET: secret,
     EVENTS: { send, sendBatch: vi.fn(), metrics: vi.fn() },
@@ -71,46 +74,46 @@ it.each([false, true])('runs live ingestion through the app (queue fails: %s)', 
   expect(send).toHaveBeenCalledExactlyOnceWith(expected, { contentType: 'json' })
   if (fails) expect(await response.json()).toEqual({ error: 'enqueue_failed' })
 })
-it('preserves event IDs on duplicate deliveries', async () => {
+it.effect('preserves event IDs on duplicate deliveries', () => Effect.gen(function* () {
   for (let i = 0; i < 2; i++) {
-    const { enqueue } = await handle(await signed())
+    const { enqueue } = yield* handle(yield* signed())
     expect(enqueue).toHaveBeenCalledExactlyOnceWith(expected)
   }
-})
-it.each([-301, -300, 300, 301])('enforces freshness at %s seconds', async (offset) => {
-  const { response, enqueue } = await handle(await signed(undefined, String(now + offset)))
+}))
+it.effect.each([-301, -300, 300, 301])('enforces freshness at %s seconds', (offset) => Effect.gen(function* () {
+  const { response, enqueue } = yield* handle(yield* signed(undefined, String(now + offset)))
   expect(response.status).toBe(Math.abs(offset) > 300 ? 401 : 202)
   expect(enqueue).toHaveBeenCalledTimes(Math.abs(offset) > 300 ? 0 : 1)
-})
-it.each(['webhook-id', 'webhook-timestamp', 'webhook-signature'])('rejects missing %s', async (header) => {
-  const request = await signed()
+}))
+it.effect.each(['webhook-id', 'webhook-timestamp', 'webhook-signature'])('rejects missing %s', (header) => Effect.gen(function* () {
+  const request = yield* signed()
   request.headers.delete(header)
-  await rejected(request, 401)
-})
-it.each([
+  yield* rejected(request, 401)
+}))
+it.effect.each([
   ['webhook-id', 'event.123'], ['webhook-id', 'x'.repeat(513)],
   ['webhook-timestamp', '1800000000junk'], ['webhook-timestamp', '1.8e9'],
   ['webhook-signature', 'v1,%%%'], ['webhook-signature', 'v1,YQ=='],
   ['webhook-signature', 'v2,unknown'], ['webhook-signature', 'x'.repeat(4097)],
   ['webhook-signature', Array(17).fill('v2,unknown').join(' ')],
-])('rejects malformed %s: %s', async (header, value) => {
-  const request = await signed()
+])('rejects malformed %s: %s', ([header, value]) => Effect.gen(function* () {
+  const request = yield* signed()
   request.headers.set(header, value)
-  await rejected(request, 401)
-})
-it('accepts any matching v1 signature alongside other versions and nonmatching signatures', async () => {
-  const request = await signed()
+  yield* rejected(request, 401)
+}))
+it.effect('accepts any matching v1 signature alongside other versions and nonmatching signatures', () => Effect.gen(function* () {
+  const request = yield* signed()
   request.headers.set('webhook-signature', `v2,unknown v1,%%% v1,${btoa('\0'.repeat(32))} ${request.headers.get('webhook-signature')}`)
-  expect((await handle(request)).response.status).toBe(202)
-})
-it('rejects a wrong key and tampered raw bytes', async () => {
-  const wrongKey = await handle(await signed(), 'whsec_d3Jvbmcta2V5')
+  expect((yield* handle(request)).response.status).toBe(202)
+}))
+it.effect('rejects a wrong key and tampered raw bytes', () => Effect.gen(function* () {
+  const wrongKey = yield* handle(yield* signed(), 'whsec_d3Jvbmcta2V5')
   expect(wrongKey.response.status).toBe(401)
   expect(wrongKey.enqueue).not.toHaveBeenCalled()
-  const request = await signed()
-  await rejected(new Request(request, { body: JSON.stringify(payload) + ' ' }), 401)
-})
-it.each([
+  const request = yield* signed()
+  yield* rejected(new Request(request, { body: JSON.stringify(payload) + ' ' }), 401)
+}))
+it.effect.each([
   'not json', 'null', '[]',
   JSON.stringify({ ...payload, event_id: 'different' }),
   JSON.stringify({ ...payload, event_type: 'unknown' }),
@@ -118,19 +121,19 @@ it.each([
   JSON.stringify({ ...payload, event_type: 'note.edited', data: { changed_fields: ['other'] } }),
   JSON.stringify({ ...payload, note_id: 'not_bad' }),
   JSON.stringify({ ...payload, occurred_at: '2026-02-30T15:30:00Z' }),
-])('rejects authenticated invalid payload: %s', async (body) => {
-  const response = await rejected(await signed(body), 400)
-  expect(await response.json()).toEqual({ error: 'invalid_payload' })
-})
-it('rejects authenticated invalid UTF-8 rather than replacing invalid bytes', async () => {
+])('rejects authenticated invalid payload: %s', (body) => Effect.gen(function* () {
+  const response = yield* rejected(yield* signed(body), 400)
+  expect(yield* json(response)).toEqual({ error: 'invalid_payload' })
+}))
+it.effect('rejects authenticated invalid UTF-8 rather than replacing invalid bytes', () => Effect.gen(function* () {
   const bytes = new Uint8Array(new TextEncoder().encode(JSON.stringify({ ...payload, extra: 'x' })))
   bytes[bytes.length - 3] = 0xff
-  const response = await rejected(await signed(bytes), 400)
-  expect(await response.json()).toEqual({ error: 'invalid_payload' })
-})
-it('reads exact raw bytes across chunk boundaries and releases the reader', async () => {
+  const response = yield* rejected(yield* signed(bytes), 400)
+  expect(yield* json(response)).toEqual({ error: 'invalid_payload' })
+}))
+it.effect('reads exact raw bytes across chunk boundaries and releases the reader', () => Effect.gen(function* () {
   const text = JSON.stringify({ ...payload, extra: '秘密' }, null, 2)
-  const request = await signed(text)
+  const request = yield* signed(text)
   const bytes = new TextEncoder().encode(text)
   const stream = new ReadableStream({
     start(controller) {
@@ -138,17 +141,17 @@ it('reads exact raw bytes across chunk boundaries and releases the reader', asyn
       controller.close()
     },
   })
-  const { response, enqueue } = await handle(new Request(request, { body: stream, duplex: 'half' } as RequestInit))
+  const { response, enqueue } = yield* handle(new Request(request, { body: stream, duplex: 'half' } as RequestInit))
   expect(response.status).toBe(202)
   expect(enqueue).toHaveBeenCalledExactlyOnceWith(expected)
   expect(stream.locked).toBe(false)
-})
-it('verifies before parsing JSON', async () => {
-  const request = await signed()
-  await rejected(new Request(request, { body: 'not json' }), 401)
-})
-it.each([false, true])('limits streamed bytes and cancels overflow (cancel rejects: %s)', async (cancelRejects) => {
-  const request = await signed()
+}))
+it.effect('verifies before parsing JSON', () => Effect.gen(function* () {
+  const request = yield* signed()
+  yield* rejected(new Request(request, { body: 'not json' }), 401)
+}))
+it.effect.each([false, true])('limits streamed bytes and cancels overflow (cancel rejects: %s)', (cancelRejects) => Effect.gen(function* () {
+  const request = yield* signed()
   request.headers.set('content-length', '1')
   const cancel = vi.fn(async () => {
     if (cancelRejects) throw new Error('private cancellation failure')
@@ -159,44 +162,45 @@ it.each([false, true])('limits streamed bytes and cancels overflow (cancel rejec
       controller.enqueue(new Uint8Array(32769))
     }, cancel,
   })
-  const streamed = new Request(request, { body: stream, duplex: 'half' } as RequestInit)
-  await rejected(streamed, 413)
+  yield* rejected(new Request(request, { body: stream, duplex: 'half' } as RequestInit), 413)
   expect(cancel).toHaveBeenCalledOnce()
   expect(stream.locked).toBe(false)
-})
-it('cancels a stalled body on ingestion timeout', async () => {
+}))
+it.effect('cancels a stalled body on ingestion timeout', () => Effect.gen(function* () {
+  yield* TestClock.setTime(now * 1000)
   const cancel = vi.fn()
-  const request = await signed()
   const stream = new ReadableStream({ cancel })
+  const request = new Request(yield* signed(), { body: stream, duplex: 'half' } as RequestInit)
   const enqueue = vi.fn(() => Effect.void)
-  const response = await Effect.runPromise(granolaHandler(new Request(request, {
-    body: stream, duplex: 'half',
-  } as RequestInit)).pipe(
-    Effect.provide(providersFixture({ granola: GranolaIngestionLive(Redacted.make(secret)) })),
+  // Import the key up front: the timeout starts at ingest, so the fiber must reach
+  // the stalled read without pending real async work before the clock moves.
+  const ingestion = yield* GranolaIngestionLive(Redacted.make(secret))
+  const fiber = yield* granolaHandler(request).pipe(
+    Effect.provide(providersFixture({ granola: Effect.succeed(ingestion) })),
     Effect.provideService(EventQueue, { enqueue }),
-    Effect.provideService(Clock.Clock, fixedClock(now * 1000, {
-      sleep: () => Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 20))),
-    })),
-  ))
+    Effect.forkChild,
+  )
+  yield* TestClock.adjust('10 seconds')
+  const response = yield* Fiber.join(fiber)
   expect(response.status).toBe(500)
   expect(cancel).toHaveBeenCalledOnce()
   expect(stream.locked).toBe(false)
   expect(enqueue).not.toHaveBeenCalled()
-})
-it('maps a failed body stream to a sanitized 400', async () => {
-  const request = await signed()
+}))
+it.effect('maps a failed body stream to a sanitized 400', () => Effect.gen(function* () {
+  const request = yield* signed()
   const stream = new ReadableStream({ start(controller) { controller.error(new Error('private')) } })
-  await rejected(new Request(request, { body: stream, duplex: 'half' } as RequestInit), 400)
-})
-it('accepts the exact body-size limit', async () => {
+  yield* rejected(new Request(request, { body: stream, duplex: 'half' } as RequestInit), 400)
+}))
+it.effect('accepts the exact body-size limit', () => Effect.gen(function* () {
   const body = JSON.stringify(payload)
-  expect((await handle(await signed(body.padEnd(65536, ' ')))).response.status).toBe(202)
-})
-it.each(['test-secret', 'whsec_', 'whsec_%%%', 'whsec_YR==', 'whsec_YQ'])('rejects an invalid secret format without exposing it: %s', async (value) => {
-  const result = await Effect.runPromise(Effect.result(GranolaIngestionLive(Redacted.make(value))))
+  expect((yield* handle(yield* signed(body.padEnd(65536, ' ')))).response.status).toBe(202)
+}))
+it.effect.each(['test-secret', 'whsec_', 'whsec_%%%', 'whsec_YR==', 'whsec_YQ'])('rejects an invalid secret format without exposing it: %s', (value) => Effect.gen(function* () {
+  const result = yield* Effect.result(GranolaIngestionLive(Redacted.make(value)))
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) {
     expect(result.failure._tag).toBe('WebhookConfigurationError')
     expect(JSON.stringify(result.failure)).not.toContain('whsec_')
   }
-})
+}))

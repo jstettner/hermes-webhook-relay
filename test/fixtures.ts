@@ -1,4 +1,4 @@
-import { Clock, Effect, Layer } from 'effect'
+import { Effect, Layer } from 'effect'
 import { EventQueue, type EventEnvelope } from '../src/event-queue'
 import { createApp } from '../src/index'
 import { WebhookProviders } from '../src/providers'
@@ -9,11 +9,6 @@ export const event: EventEnvelope = {
   sourceRecordId: 'meeting-1', sourceTimestamp: '2026-09-16T12:00:00Z',
 }
 export const sendResponse = { metadata: { metrics: { backlogCount: 1, backlogBytes: 128 } } }
-// The default clock (real sleep) at a fixed wall time.
-export const fixedClock = (millis: number, overrides: Partial<Clock.Clock> = {}): Clock.Clock =>
-  Object.assign(Object.create(Clock.Clock.defaultValue()), {
-    currentTimeMillis: Effect.succeed(millis), currentTimeMillisUnsafe: () => millis, ...overrides,
-  })
 export const request = () => new Request('https://example.com/webhooks/granola', { method: 'POST' })
 
 // Resolves only the given providers; every other name is a 404, as when not enabled.

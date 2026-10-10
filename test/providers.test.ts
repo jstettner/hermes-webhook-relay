@@ -1,20 +1,18 @@
+import { describe, expect, it, layer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
-import { expect, it } from 'vitest'
 import { WebhookProviders } from '../src/providers'
-import type { WebhookIngestion } from '../src/webhook'
 
 const secrets = { GRANOLA_SIGNING_SECRET: 'whsec_dGVzdC1zZWNyZXQ=', POCKET_SIGNING_SECRET: 'pocket-secret' }
 const fromEnv = (env: object) =>
   WebhookProviders.layer.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))))
-const resolve = (env: object, name: string) => Effect.runPromise(Effect.result(
-  Effect.flatMap(WebhookProviders, (registry) => registry.resolve(name)).pipe(
-    Effect.provide(fromEnv(env)),
-  ),
-))
-const tag = (result: Result.Result<WebhookIngestion, { _tag: string }>) =>
-  Result.isFailure(result) ? result.failure._tag : 'Resolved'
+// The tag a resolution ends with. A ConfigError from building the registry is caught
+// where the layer is provided.
+const tag = (name: string) => Effect.flatMap(WebhookProviders, (registry) => registry.resolve(name)).pipe(
+  Effect.result,
+  Effect.map((result) => Result.isFailure(result) ? result.failure._tag : 'Resolved'),
+)
 
-it.each([
+it.effect.each([
   ['granola,pocket', 'granola', 'Resolved'],
   [' granola , pocket ', 'pocket', 'Resolved'],
   ['granola', 'pocket', 'WebhookProviderNotFound'],
@@ -30,19 +28,28 @@ it.each([
   // Only a real JSON array (a JSON var) is a list; a JSON string is not parsed.
   ['["granola"]', 'granola', 'ConfigError'],
   [['granola', 'other'], 'granola', 'ConfigError'],
-])('WEBHOOK_PROVIDERS=%j resolves %s as %s', async (enabled, name, expected) => {
-  expect(tag(await resolve({ ...secrets, WEBHOOK_PROVIDERS: enabled }, name))).toBe(expected)
+] as const)('WEBHOOK_PROVIDERS=%j resolves %s as %s', ([enabled, name, expected]) =>
+  tag(name).pipe(
+    Effect.provide(fromEnv({ ...secrets, WEBHOOK_PROVIDERS: enabled })),
+    Effect.catchTag('ConfigError', (error) => Effect.succeed(error._tag)),
+    Effect.map((actual) => expect(actual).toBe(expected)),
+  ))
+
+describe.each([undefined, ''])('with POCKET_SIGNING_SECRET=%j', (value) => {
+  layer(fromEnv({ ...secrets, WEBHOOK_PROVIDERS: 'granola,pocket', POCKET_SIGNING_SECRET: value }))((it) => {
+    it.effect('treats the missing secret as misconfiguration for that provider', () =>
+      Effect.map(tag('pocket'), (actual) => expect(actual).toBe('WebhookConfigurationError')))
+    it.effect('still resolves the other provider', () =>
+      Effect.map(tag('granola'), (actual) => expect(actual).toBe('Resolved')))
+  })
 })
-it.each([undefined, ''])('treats a missing or empty secret (%j) as misconfiguration for that provider only', async (value) => {
-  const env = { ...secrets, WEBHOOK_PROVIDERS: 'granola,pocket', POCKET_SIGNING_SECRET: value }
-  expect(tag(await resolve(env, 'pocket'))).toBe('WebhookConfigurationError')
-  expect(tag(await resolve(env, 'granola'))).toBe('Resolved')
+
+layer(fromEnv({ ...secrets, WEBHOOK_PROVIDERS: 'granola', EVENTS: { send: () => {} } }))('with a queue binding', (it) => {
+  it.effect('ignores non-string bindings', () =>
+    Effect.map(tag('granola'), (actual) => expect(actual).toBe('Resolved')))
 })
-it('ignores non-string bindings such as the queue', async () => {
-  const env = { ...secrets, WEBHOOK_PROVIDERS: 'granola', EVENTS: { send: () => {} } }
-  expect(tag(await resolve(env, 'granola'))).toBe('Resolved')
-})
-it('fails layer construction, not resolution, for a malformed list', async () => {
-  const built = await Effect.runPromise(Effect.result(Layer.build(fromEnv({ WEBHOOK_PROVIDERS: 'nope' })).pipe(Effect.scoped)))
+
+it.effect('fails layer construction, not resolution, for a malformed list', () => Effect.gen(function* () {
+  const built = yield* Effect.result(Layer.build(fromEnv({ WEBHOOK_PROVIDERS: 'nope' })))
   expect(Result.isFailure(built) && built.failure._tag).toBe('ConfigError')
-})
+}))
